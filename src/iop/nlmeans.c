@@ -85,7 +85,21 @@ typedef struct dt_iop_nlmeans_global_data_t
 
 const char *name()
 {
+  return _("astrophoto denoise");
+}
+
+const char *aliases()
+{
   return _("denoise (non-local means)");
+}
+
+const char *description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("apply a poisson noise removal best suited for astrophotography"),
+                                      _("corrective"),
+                                      _("non-linear, Lab, display-referred"),
+                                      _("non-linear, Lab"),
+                                      _("non-linear, Lab, display-referred"));
 }
 
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -111,30 +125,12 @@ int legacy_params(dt_iop_module_t *self, const void *const old_params, const int
 
 int default_group()
 {
-  return IOP_GROUP_CORRECT;
+  return IOP_GROUP_CORRECT | IOP_GROUP_TECHNICAL;
 }
 
 int flags()
 {
   return IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING;
-}
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "patch size"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "strength"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "luma"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "chroma"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_nlmeans_gui_data_t *g = (dt_iop_nlmeans_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_slider_iop(self, "patch size", GTK_WIDGET(g->radius));
-  dt_accel_connect_slider_iop(self, "strength", GTK_WIDGET(g->strength));
-  dt_accel_connect_slider_iop(self, "luma", GTK_WIDGET(g->luma));
-  dt_accel_connect_slider_iop(self, "chroma", GTK_WIDGET(g->chroma));
 }
 
 #if defined(HAVE_OPENCL) && !USE_NEW_IMPL_CL
@@ -166,7 +162,7 @@ int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_m
   const float max_L = 120.0f, max_C = 512.0f;
   const float nL = 1.0f / max_L, nC = 1.0f / max_C;
   const float norm2[4] = { nL, nC }; //luma and chroma scaling factors
-  
+
   // allocate a buffer to receive the denoised image
   const int devid = piece->pipe->devid;
   cl_mem dev_U2 = dt_opencl_alloc_device_buffer(devid, (size_t)width * height * 4 * sizeof(float));
@@ -424,7 +420,7 @@ static void process_cpu(dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
 
   // faster but less accurate processing by skipping half the patches on previews and thumbnails
   int decimate = (piece->pipe->type == DT_DEV_PIXELPIPE_PREVIEW || piece->pipe->type == DT_DEV_PIXELPIPE_THUMBNAIL);
-  
+
   const dt_nlmeans_param_t params = { .scattering = 0,
                                       .scale = scale,
                                       .luma = d->luma,
@@ -498,7 +494,6 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
 void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   piece->data = malloc(sizeof(dt_iop_nlmeans_data_t));
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -520,8 +515,7 @@ void gui_update(dt_iop_module_t *self)
 
 void gui_init(dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_nlmeans_gui_data_t));
-  dt_iop_nlmeans_gui_data_t *g = (dt_iop_nlmeans_gui_data_t *)self->gui_data;
+  dt_iop_nlmeans_gui_data_t *g = IOP_GUI_ALLOC(nlmeans);
 
   g->radius = dt_bauhaus_slider_from_params(self, "radius");
   dt_bauhaus_slider_set_soft_max(g->radius, 4.0f);

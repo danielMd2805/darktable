@@ -284,6 +284,15 @@ const char *name()
   return _("watermark");
 }
 
+const char *description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("overlay an SVG watermark like a signature on the picture"),
+                                      _("creative"),
+                                      _("non-linear, RGB, display-referred"),
+                                      _("non-linear, RGB"),
+                                      _("non-linear, RGB, display-referred"));
+}
+
 int flags()
 {
   return IOP_FLAGS_INCLUDE_IN_STYLES | IOP_FLAGS_SUPPORTS_BLENDING;
@@ -291,7 +300,7 @@ int flags()
 
 int default_group()
 {
-  return IOP_GROUP_EFFECT;
+  return IOP_GROUP_EFFECT | IOP_GROUP_EFFECTS;
 }
 
 int operation_tags()
@@ -302,32 +311,6 @@ int operation_tags()
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   return iop_cs_rgb;
-}
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_iop(self, FALSE, NC_("accel", "refresh"), 0, 0);
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "opacity"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "scale"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "rotation"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "x offset"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "y offset"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "marker"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "scale on"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_watermark_gui_data_t *g = (dt_iop_watermark_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_button_iop(self, "refresh", GTK_WIDGET(g->refresh));
-  dt_accel_connect_slider_iop(self, "opacity", GTK_WIDGET(g->opacity));
-  dt_accel_connect_slider_iop(self, "scale", GTK_WIDGET(g->scale));
-  dt_accel_connect_slider_iop(self, "rotation", GTK_WIDGET(g->rotate));
-  dt_accel_connect_slider_iop(self, "x offset", GTK_WIDGET(g->x_offset));
-  dt_accel_connect_slider_iop(self, "y offset", GTK_WIDGET(g->y_offset));
-  dt_accel_connect_combobox_iop(self, "marker", GTK_WIDGET(g->watermarks));
-  dt_accel_connect_combobox_iop(self, "scale on", GTK_WIDGET(g->sizeto));
 }
 
 static void _combo_box_set_active_text(dt_iop_watermark_gui_data_t *g, gchar *text)
@@ -1112,24 +1095,22 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   /* render surface on output */
   guint8 *sd = image;
   const float opacity = data->opacity / 100.0f;
-  /*
-  #ifdef _OPENMP
-    #pragma omp parallel for default(none) shared(in, out,sd,opacity) schedule(static)
-  #endif
-  */
-  for(int j = 0; j < roi_out->height; j++)
-    for(int i = 0; i < roi_out->width; i++)
-    {
-      const float alpha = (sd[3] / 255.0f) * opacity;
-      /* svg uses a premultiplied alpha, so only use opacity for the blending */
-      out[0] = ((1.0f - alpha) * in[0]) + (opacity * (sd[2] / 255.0f));
-      out[1] = ((1.0f - alpha) * in[1]) + (opacity * (sd[1] / 255.0f));
-      out[2] = ((1.0f - alpha) * in[2]) + (opacity * (sd[0] / 255.0f));
-      out[3] = in[3];
-
-      out += ch;
-      in += ch;
-      sd += 4;
+#ifdef _OPENMP
+#pragma omp parallel for default(none) \
+  dt_omp_firstprivate(roi_out, in, out, sd, opacity, ch)   \
+  schedule(static)
+#endif
+  for(int j = 0; j < roi_out->height * roi_out->width; j++)
+  {
+    float *const i = in + ch*j;
+    float *const o = out + ch*j;
+    guint8 *const s = sd + 4*j;
+    const float alpha = (s[3] / 255.0f) * opacity;
+    /* svg uses a premultiplied alpha, so only use opacity for the blending */
+    o[0] = ((1.0f - alpha) * i[0]) + (opacity * (s[2] / 255.0f));
+    o[1] = ((1.0f - alpha) * i[1]) + (opacity * (s[1] / 255.0f));
+    o[2] = ((1.0f - alpha) * i[2]) + (opacity * (s[0] / 255.0f));
+    o[3] = in[3];
     }
 
 
@@ -1339,7 +1320,6 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pix
 void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   piece->data = malloc(sizeof(dt_iop_watermark_data_t));
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -1379,14 +1359,11 @@ void init(dt_iop_module_t *module)
 
   g_strlcpy(d->filename, "darktable.svg", sizeof(d->filename));
   g_strlcpy(d->font, "DejaVu Sans 10", sizeof(d->font));
-
-  memcpy(module->params, module->default_params, sizeof(dt_iop_watermark_params_t));
 }
 
 void gui_init(struct dt_iop_module_t *self)
 {
-  self->gui_data = calloc(1, sizeof(dt_iop_watermark_gui_data_t));
-  dt_iop_watermark_gui_data_t *g = (dt_iop_watermark_gui_data_t *)self->gui_data;
+  dt_iop_watermark_gui_data_t *g = IOP_GUI_ALLOC(watermark);
   dt_iop_watermark_params_t *p = (dt_iop_watermark_params_t *)self->params;
 
   self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
@@ -1438,8 +1415,7 @@ void gui_init(struct dt_iop_module_t *self)
   gtk_grid_attach_next_to(grid, g->color_picker_button, g->colorpick, GTK_POS_RIGHT, 1, 1);
 
   // Simple text
-  label = gtk_label_new(_("text"));
-  gtk_widget_set_halign(label, GTK_ALIGN_START);
+  label = dt_ui_label_new(_("text"));
   g->text = gtk_entry_new();
   gtk_entry_set_width_chars(GTK_ENTRY(g->text), 1);
   gtk_widget_set_tooltip_text(g->text, _("text string, tag:\n$(WATERMARK_TEXT)"));
@@ -1523,13 +1499,12 @@ void gui_init(struct dt_iop_module_t *self)
 
 void gui_cleanup(struct dt_iop_module_t *self)
 {
-
   dt_iop_watermark_gui_data_t *g = (dt_iop_watermark_gui_data_t *)self->gui_data;
   g_list_free_full(g->watermarks_filenames, g_free);
   dt_gui_key_accel_block_on_focus_disconnect(g->text);
   g->watermarks_filenames = NULL;
-  free(self->gui_data);
-  self->gui_data = NULL;
+
+  IOP_GUI_FREE;
 }
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh

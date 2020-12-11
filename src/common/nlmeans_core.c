@@ -32,18 +32,6 @@
 #include <xmmintrin.h>
 #endif
 
-#ifndef dt_omp_shared
-#ifdef _OPENMP
-#if defined(__clang__) || __GNUC__ > 8
-# define dt_omp_shared(var, ...)  shared(var, __VA_ARGS__)
-#else
-  // GCC 8.4 throws string of errors "'x' is predetermined 'shared' for 'shared'" if we explicitly declare
-  //  'const' variables as shared
-# define dt_omp_shared(var, ...)
-#endif
-#endif /* _OPENMP */
-#endif /* dt_omp_shared */
-
 // to avoid accumulation of rounding errors, we should do a full recomputation of the patch differences
 //   every so many rows of the image.  We'll also use that interval as the target maximum chunk size for
 //   parallelization
@@ -327,7 +315,9 @@ static void init_column_sums_sse2(float *const col_sums, const patch_t *const pa
     col_sums[col] = sum;
   }
   // clear out any columns where the patch column would be outside the RoI, as well as our overrun area
-  for (int col = col_max; col < chunk_right + radius; col++)
+  // (When the chunk is sufficiently narrow, col_max can become less than col_min, which would cause a buffer
+  // under-run if we didn't check for that condition here.)
+  for (int col = MAX(col_min,col_max); col < chunk_right + radius; col++)
   {
     col_sums[col] = 0;
 #ifdef CACHE_PIXDIFFS_SSE
@@ -374,13 +364,15 @@ static int compute_slice_width(const int width)
 {
   int sl_width = SLICE_WIDTH;
   // if there's just a sliver left over for the last column, see whether slicing a few pixels off each gives
-  // us a mostly-full final chunk
-  if (width % sl_width < SLICE_WIDTH/2)
+  // us a more nearly full final chunk
+  int rem = width % sl_width;
+  if (rem < SLICE_WIDTH/2 && (width % (sl_width-4)) > rem)
   {
-    if (width % (sl_width-4) >= SLICE_WIDTH/2)
+    sl_width -= 4;
+    // check whether removing an additional sliver improves things even more
+    rem = width % sl_width;
+    if (rem < SLICE_WIDTH/2 && (width % (sl_width-4)) > rem)
       sl_width -= 4;
-    else if (width % (sl_width-8) >= SLICE_WIDTH/2)
-      sl_width -= 8;
   }
   return sl_width;
 }
@@ -398,7 +390,7 @@ void nlmeans_denoise(const float *const inbuf, float *const outbuf,
   // define the normalization to convert central pixel differences into central pixel weights
   const float cp_norm = compute_center_pixel_norm(params->center_weight,params->patch_radius);
   const float center_norm[4] = { cp_norm, cp_norm, cp_norm, 1.0f };
-  
+
   // define the patches to be compared when denoising a pixel
   const size_t stride = 4 * roi_in->width;
   int num_patches;
@@ -419,7 +411,7 @@ void nlmeans_denoise(const float *const inbuf, float *const outbuf,
 #ifdef _OPENMP
 #pragma omp parallel for default(none) num_threads(darktable.num_openmp_threads) \
       dt_omp_firstprivate(patches, num_patches, scratch_buf, chk_height, chk_width, radius) \
-      dt_omp_shared(params, padded_scratch_size, roi_out, outbuf, inbuf, stride, center_norm, skip_blend, weight, invert) \
+      dt_omp_sharedconst(params, padded_scratch_size, roi_out, outbuf, inbuf, stride, center_norm, skip_blend, weight, invert) \
       schedule(static) \
       collapse(2)
 #endif
@@ -624,7 +616,7 @@ void nlmeans_denoise_sse2(const float *const inbuf, float *const outbuf,
   // define the normalization to convert central pixel differences into central pixel weights
   const float cp_norm = compute_center_pixel_norm(params->center_weight,params->patch_radius);
   const float center_norm[4] = { cp_norm, cp_norm, cp_norm, 1.0f };
-  
+
   // define the patches to be compared when denoising a pixel
   const size_t stride = 4 * roi_in->width;
   int num_patches;
@@ -645,7 +637,7 @@ void nlmeans_denoise_sse2(const float *const inbuf, float *const outbuf,
 #ifdef _OPENMP
 #pragma omp parallel for default(none) num_threads(darktable.num_openmp_threads) \
       dt_omp_firstprivate(patches, num_patches, scratch_buf, chk_height, chk_width, radius) \
-      dt_omp_shared(params, padded_scratch_size, roi_out, outbuf, inbuf, stride, center_norm, skip_blend, weight, invert) \
+      dt_omp_sharedconst(params, padded_scratch_size, roi_out, outbuf, inbuf, stride, center_norm, skip_blend, weight, invert) \
       schedule(static) \
       collapse(2)
 #endif
@@ -945,7 +937,7 @@ int nlmeans_denoise_cl(const dt_nlmeans_param_t *const params, const int devid,
   int hblocksize;
   int vblocksize;
   get_blocksizes(&hblocksize, &vblocksize, P, devid, params->kernel_horiz, params->kernel_vert);
-  
+
   // zero the output buffer into which we will be accumulating results
   err = nlmeans_cl_init(devid,params->kernel_init,dev_out,height,width);
   if(err != CL_SUCCESS) goto error;

@@ -103,7 +103,7 @@ const char *name()
 
 int default_group()
 {
-  return IOP_GROUP_TONE;
+  return IOP_GROUP_TONE | IOP_GROUP_GRADING;
 }
 
 int flags()
@@ -116,16 +116,13 @@ int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_p
   return iop_cs_rgb;
 }
 
-void init_key_accels(dt_iop_module_so_t *self)
+const char *description(struct dt_iop_module_t *self)
 {
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "preserve colors"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_rgblevels_gui_data_t *g = (dt_iop_rgblevels_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_combobox_iop(self, "preserve colors", GTK_WIDGET(g->cmb_preserve_colors));
+  return dt_iop_set_description(self, _("adjust black, white and mid-gray points in RGB color space"),
+                                      _("corrective and creative"),
+                                      _("linear, RGB, display-referred"),
+                                      _("non-linear, RGB"),
+                                      _("non-linear, RGB, display-referred"));
 }
 
 static void _turn_select_region_off(struct dt_iop_module_t *self)
@@ -475,34 +472,26 @@ static gboolean _area_draw_callback(GtkWidget *widget, cairo_t *crf, dt_iop_modu
 
     if(hist && hist_max > 0.0f)
     {
-      cairo_save(cr);
+      cairo_push_group_with_content(cr, CAIRO_CONTENT_COLOR);
       cairo_scale(cr, width / 255.0, -(height - DT_PIXEL_APPLY_DPI(5)) / hist_max);
 
       if(p->autoscale == DT_IOP_RGBLEVELS_LINKED_CHANNELS)
       {
         cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
-
-        cairo_set_source_rgba(cr, 1., 0., 0., 0.2);
-        dt_draw_histogram_8(cr, hist, 4, DT_IOP_RGBLEVELS_R, is_linear);
-
-        cairo_set_source_rgba(cr, 0., 1., 0., 0.2);
-        dt_draw_histogram_8(cr, hist, 4, DT_IOP_RGBLEVELS_G, is_linear);
-
-        cairo_set_source_rgba(cr, 0., 0., 1., 0.2);
-        dt_draw_histogram_8(cr, hist, 4, DT_IOP_RGBLEVELS_B, is_linear);
+        for(int k=DT_IOP_RGBLEVELS_R; k<DT_IOP_RGBLEVELS_MAX_CHANNELS; k++)
+        {
+          set_color(cr, darktable.bauhaus->graph_primaries[k]);
+          dt_draw_histogram_8(cr, hist, 4, k, is_linear);
+        }
       }
       else if(p->autoscale == DT_IOP_RGBLEVELS_INDEPENDENT_CHANNELS)
       {
-        if(ch == DT_IOP_RGBLEVELS_R)
-          cairo_set_source_rgba(cr, 1., 0., 0., 0.2);
-        else if(ch == DT_IOP_RGBLEVELS_G)
-          cairo_set_source_rgba(cr, 0., 1., 0., 0.2);
-        else
-          cairo_set_source_rgba(cr, 0., 0., 1., 0.2);
+        set_color(cr, darktable.bauhaus->graph_primaries[ch]);
         dt_draw_histogram_8(cr, hist, 4, ch, is_linear);
       }
 
-      cairo_restore(cr);
+      cairo_pop_group_to_source(cr);
+      cairo_paint_with_alpha(cr, 0.2);
     }
   }
 
@@ -909,8 +898,6 @@ void init(dt_iop_module_t *self)
     d->levels[c][1] = RGBLEVELS_MID;
     d->levels[c][2] = RGBLEVELS_MAX;
   }
-
-  memcpy(self->params, self->default_params, sizeof(dt_iop_rgblevels_params_t));
 }
 
 void init_global(dt_iop_module_so_t *self)
@@ -944,8 +931,7 @@ void change_image(struct dt_iop_module_t *self)
 
 void gui_init(dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_rgblevels_gui_data_t));
-  dt_iop_rgblevels_gui_data_t *c = (dt_iop_rgblevels_gui_data_t *)self->gui_data;
+  dt_iop_rgblevels_gui_data_t *c = IOP_GUI_ALLOC(rgblevels);
 
   dt_pthread_mutex_init(&c->lock, NULL);
   change_image(self);
@@ -1024,21 +1010,21 @@ void gui_init(dt_iop_module_t *self)
   gtk_widget_set_tooltip_text(c->cmb_preserve_colors, _("method to preserve colors when applying contrast"));
 
   // add signal handler for preview pipe finish
-  dt_control_signal_connect(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED,
+  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED,
                             G_CALLBACK(_develop_ui_pipe_finished_callback), self);
 }
 
 void gui_cleanup(dt_iop_module_t *self)
 {
-  dt_control_signal_disconnect(darktable.signals, G_CALLBACK(_develop_ui_pipe_finished_callback), self);
+  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_develop_ui_pipe_finished_callback), self);
 
   dt_iop_rgblevels_gui_data_t *g = (dt_iop_rgblevels_gui_data_t *)self->gui_data;
   if(g)
   {
     dt_pthread_mutex_destroy(&g->lock);
   }
-  free(self->gui_data);
-  self->gui_data = NULL;
+
+  IOP_GUI_FREE;
 }
 
 static void _get_selected_area(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece,

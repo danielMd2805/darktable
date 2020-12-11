@@ -43,9 +43,9 @@ typedef struct dt_iop_basicadj_params_t
   float exposure;       // $MIN: -18.0 $MAX: 18.0 $DEFAULT: 0.0
   float hlcompr;        /* $MIN: 0 $MAX: 500.0 $DEFAULT: 0.0
                            $DESCRIPTION:"highlight compression" */
-  float hlcomprthresh;  
+  float hlcomprthresh;
   float contrast;       // $MIN: -1.0 $MAX: 5.0 $DEFAULT: 0.0
-  dt_iop_rgb_norms_t preserve_colors; /* $DEFAULT: DT_RGB_NORM_LUMINANCE 
+  dt_iop_rgb_norms_t preserve_colors; /* $DEFAULT: DT_RGB_NORM_LUMINANCE
                                          $DESCRIPTION:"preserve colors" */
   float middle_grey;    // $MIN: 0.05 $MAX: 100 $DEFAULT: 18.42 $DESCRIPTION: "middle grey"
   float brightness;     // $MIN: -4.0 $MAX: 4.0 $DEFAULT: 0.0
@@ -135,18 +135,18 @@ const char *name()
   return _("basic adjustments");
 }
 
-const char *description()
+const char *description(struct dt_iop_module_t *self)
 {
-  return _("apply usual adjustments,\n"
-           "for corrective and creative purposes.\n"
-           "works in RGB,\n"
-           "takes preferably a linear RGB input,\n"
-           "outputs non-linear RGB.");
+  return dt_iop_set_description(self, _("apply usual image adjustments"),
+                                      _("creative"),
+                                      _("linear, RGB, scene-referred"),
+                                      _("non-linear, RGB"),
+                                      _("non-linear, RGB, scene-referred"));
 }
 
 int default_group()
 {
-  return IOP_GROUP_BASIC;
+  return IOP_GROUP_BASIC | IOP_GROUP_GRADING;
 }
 
 int flags()
@@ -157,36 +157,6 @@ int flags()
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   return iop_cs_rgb;
-}
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "black level correction"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "exposure"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "highlight compression"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "contrast"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "middle grey"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "brightness"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "saturation"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "vibrance"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "clip"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "preserve colors"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_basicadj_gui_data_t *g = (dt_iop_basicadj_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_slider_iop(self, "black level correction", GTK_WIDGET(g->sl_black_point));
-  dt_accel_connect_slider_iop(self, "exposure", GTK_WIDGET(g->sl_exposure));
-  dt_accel_connect_slider_iop(self, "highlight compression", GTK_WIDGET(g->sl_hlcompr));
-  dt_accel_connect_slider_iop(self, "contrast", GTK_WIDGET(g->sl_contrast));
-  dt_accel_connect_slider_iop(self, "middle grey", GTK_WIDGET(g->sl_middle_grey));
-  dt_accel_connect_slider_iop(self, "brightness", GTK_WIDGET(g->sl_brightness));
-  dt_accel_connect_slider_iop(self, "saturation", GTK_WIDGET(g->sl_saturation));
-  dt_accel_connect_slider_iop(self, "vibrance", GTK_WIDGET(g->sl_vibrance));
-  dt_accel_connect_slider_iop(self, "clip", GTK_WIDGET(g->sl_clip));
-  dt_accel_connect_combobox_iop(self, "preserve colors", GTK_WIDGET(g->cmb_preserve_colors));
 }
 
 static void _turn_select_region_off(struct dt_iop_module_t *self)
@@ -493,7 +463,7 @@ void color_picker_apply(dt_iop_module_t *self, GtkWidget *picker, dt_dev_pixelpi
   dt_iop_basicadj_params_t *p = (dt_iop_basicadj_params_t *)self->params;
   dt_iop_basicadj_gui_data_t *g = (dt_iop_basicadj_gui_data_t *)self->gui_data;
 
-  const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_pipe_work_profile_info(piece->pipe);
+  const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_pipe_current_profile_info(self, piece->pipe);
   p->middle_grey = (work_profile) ? (dt_ioppr_get_rgb_matrix_luminance(self->picked_color,
                                                                        work_profile->matrix_in,
                                                                        work_profile->lut_in,
@@ -564,7 +534,6 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
 void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   piece->data = malloc(sizeof(dt_iop_basicadj_data_t));
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -610,8 +579,7 @@ void change_image(struct dt_iop_module_t *self)
 
 void gui_init(struct dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_basicadj_gui_data_t));
-  dt_iop_basicadj_gui_data_t *g = (dt_iop_basicadj_gui_data_t *)self->gui_data;
+  dt_iop_basicadj_gui_data_t *g = IOP_GUI_ALLOC(basicadj);
 
   dt_pthread_mutex_init(&g->lock, NULL);
   change_image(self);
@@ -644,7 +612,7 @@ void gui_init(struct dt_iop_module_t *self)
   g->cmb_preserve_colors = dt_bauhaus_combobox_from_params(self, "preserve_colors") ;
   gtk_widget_set_tooltip_text(g->cmb_preserve_colors, _("method to preserve colors when applying contrast"));
 
-  g->sl_middle_grey = dt_color_picker_new(self, DT_COLOR_PICKER_AREA, 
+  g->sl_middle_grey = dt_color_picker_new(self, DT_COLOR_PICKER_AREA,
                       dt_bauhaus_slider_from_params(self, "middle_grey"));
   dt_bauhaus_slider_set_step(g->sl_middle_grey, .5);
   dt_bauhaus_slider_set_format(g->sl_middle_grey, "%.2f %%");
@@ -660,11 +628,10 @@ void gui_init(struct dt_iop_module_t *self)
 
   g->sl_vibrance = dt_bauhaus_slider_from_params(self, N_("vibrance"));
   gtk_widget_set_tooltip_text(g->sl_vibrance, _("vibrance adjustment"));
- 
+
   GtkWidget *autolevels_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, DT_PIXEL_APPLY_DPI(10));
 
-  g->bt_auto_levels = gtk_button_new_with_label(_("auto"));
-  gtk_widget_set_tooltip_text(g->bt_auto_levels, _("apply auto exposure based on the entire image"));
+  g->bt_auto_levels = dt_ui_button_new(_("auto"), _("apply auto exposure based on the entire image"), NULL);
   g_signal_connect(G_OBJECT(g->bt_auto_levels), "clicked", G_CALLBACK(_auto_levels_callback), self);
   gtk_widget_set_size_request(g->bt_auto_levels, -1, DT_PIXEL_APPLY_DPI(24));
   gtk_box_pack_start(GTK_BOX(autolevels_box), g->bt_auto_levels, TRUE, TRUE, 0);
@@ -684,25 +651,25 @@ void gui_init(struct dt_iop_module_t *self)
   gtk_widget_set_tooltip_text(g->sl_clip, _("adjusts clipping value for auto exposure calculation"));
 
   // add signal handler for preview pipe finish
-  dt_control_signal_connect(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED,
+  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED,
                             G_CALLBACK(_develop_ui_pipe_finished_callback), self);
   // and profile change
-  dt_control_signal_connect(darktable.signals, DT_SIGNAL_CONTROL_PROFILE_USER_CHANGED,
+  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_CONTROL_PROFILE_USER_CHANGED,
                             G_CALLBACK(_signal_profile_user_changed), self);
 }
 
 void gui_cleanup(struct dt_iop_module_t *self)
 {
-  dt_control_signal_disconnect(darktable.signals, G_CALLBACK(_develop_ui_pipe_finished_callback), self);
-  dt_control_signal_disconnect(darktable.signals, G_CALLBACK(_signal_profile_user_changed), self);
+  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_develop_ui_pipe_finished_callback), self);
+  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_signal_profile_user_changed), self);
 
   dt_iop_basicadj_gui_data_t *g = (dt_iop_basicadj_gui_data_t *)self->gui_data;
   if(g)
   {
     dt_pthread_mutex_destroy(&g->lock);
   }
-  free(self->gui_data);
-  self->gui_data = NULL;
+
+  IOP_GUI_FREE;
 }
 
 static inline int64_t doubleToRawLongBits(double d)
@@ -1304,7 +1271,7 @@ static void _get_selected_area(struct dt_iop_module_t *self, dt_dev_pixelpipe_io
 int process_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, cl_mem dev_in, cl_mem dev_out,
                const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
-  const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_pipe_work_profile_info(piece->pipe);
+  const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_iop_work_profile_info(self, self->dev->iop);
 
   const int ch = piece->colors;
   dt_iop_basicadj_data_t *d = (dt_iop_basicadj_data_t *)piece->data;
@@ -1479,7 +1446,7 @@ cleanup:
 void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
              void *const ovoid, const dt_iop_roi_t *const roi_in, const dt_iop_roi_t *const roi_out)
 {
-  const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_pipe_work_profile_info(piece->pipe);
+  const dt_iop_order_iccprofile_info_t *const work_profile = dt_ioppr_get_iop_work_profile_info(self, self->dev->iop);
 
   const int ch = piece->colors;
   dt_iop_basicadj_data_t *d = (dt_iop_basicadj_data_t *)piece->data;

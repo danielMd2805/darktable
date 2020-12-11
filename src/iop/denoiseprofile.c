@@ -19,6 +19,7 @@
 #include "config.h"
 #endif
 #include "bauhaus/bauhaus.h"
+#include "common/eaw.h"
 #include "common/exif.h"
 #include "common/nlmeans_core.h"
 #include "common/noiseprofiles.h"
@@ -206,9 +207,9 @@ typedef struct dt_iop_denoiseprofile_params_t
   float bias;       /* allows to reduce backtransform bias
                        $MIN: -1000.0 $MAX: 100.0 $DEFAULT: 0.0 $DESCRIPTION: "bias correction" */
   float scattering; /* spread the patch search zone without increasing number of patches
-                       $MIN: 0.0 $MAX: 20.0 $DEFAULT: 0.0 $DESCRIPTION: "scattering (coarse-grain noise)" */
+                       $MIN: 0.0 $MAX: 20.0 $DEFAULT: 0.0 $DESCRIPTION: "scattering" */
   float central_pixel_weight; /* increase central pixel's weight in patch comparison
-                       $MIN: 0.0 $MAX: 10.0 $DEFAULT: 0.1 $DESCRIPTION: "central pixel weight (details)" */
+                       $MIN: 0.0 $MAX: 10.0 $DEFAULT: 0.1 $DESCRIPTION: "central pixel weight" */
   float overshooting; /* adjusts the way parameters are autoset
                          $MIN: 0.001 $MAX: 1000.0 $DEFAULT: 1.0 $DESCRIPTION: "adjust autoset parameters" */
   float a[3], b[3]; // fit for poissonian-gaussian noise per color channel.
@@ -589,15 +590,57 @@ int legacy_params(dt_iop_module_t *self, const void *const old_params, const int
   return 1;
 }
 
+void init_presets(dt_iop_module_so_t *self)
+{
+  dt_iop_denoiseprofile_params_t p;
+  memset(&p, 0, sizeof(p));
+
+  p.mode = MODE_WAVELETS;
+  p.wavelet_color_mode = MODE_Y0U0V0;
+  p.strength = 3.0f;
+  p.use_new_vst = TRUE;
+  // disable variance stabilization transform to avoid any bias
+  // (wavelets perform well even without the VST):
+  p.shadows = 0.0f;
+  p.bias = 0.0f;
+  // this influences as well the way Y0U0V0 is computed:
+  p.wb_adaptive_anscombe = TRUE;
+  p.a[0] = -1.0f; // autodetect profile
+  p.central_pixel_weight = 0.1f;
+  p.overshooting = 1.0f;
+  p.fix_anscombe_and_nlmeans_norm = TRUE;
+  for(int b = 0; b < DT_IOP_DENOISE_PROFILE_BANDS; b++)
+  {
+    for(int c = 0; c < DT_DENOISE_PROFILE_NONE; c++)
+    {
+      p.x[c][b] = b / (DT_IOP_DENOISE_PROFILE_BANDS - 1.0f);
+      p.y[c][b] = 0.5f;
+    }
+    p.x[DT_DENOISE_PROFILE_Y0][b] = b / (DT_IOP_DENOISE_PROFILE_BANDS - 1.0f);
+    p.y[DT_DENOISE_PROFILE_Y0][b] = 0.0f;
+  }
+  dt_gui_presets_add_generic(_("wavelets: chroma only"), self->op, self->version(), &p,
+                             sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
+}
 
 const char *name()
 {
   return _("denoise (profiled)");
 }
 
+const char *description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self,
+                                _("denoise using noise statistics profiled on sensors."),
+                                _("corrective"),
+                                _("linear, RGB, scene-referred"),
+                                _("linear, RGB"),
+                                _("linear, RGB, scene-referred"));
+}
+
 int default_group()
 {
-  return IOP_GROUP_CORRECT;
+  return IOP_GROUP_CORRECT | IOP_GROUP_TECHNICAL;
 }
 
 int flags()
@@ -608,34 +651,6 @@ int flags()
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   return iop_cs_rgb;
-}
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "strength"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "adjust autoset parameters"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "preserve shadows"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "bias correction"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "patch size"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "search radius"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "scattering"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "central pixel weight"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "mode"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_denoiseprofile_gui_data_t *g = (dt_iop_denoiseprofile_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_slider_iop(self, "strength", GTK_WIDGET(g->strength));
-  dt_accel_connect_slider_iop(self, "adjust autoset parameters", GTK_WIDGET(g->overshooting));
-  dt_accel_connect_slider_iop(self, "preserve shadows", GTK_WIDGET(g->shadows));
-  dt_accel_connect_slider_iop(self, "bias correction", GTK_WIDGET(g->bias));
-  dt_accel_connect_slider_iop(self, "patch size", GTK_WIDGET(g->radius));
-  dt_accel_connect_slider_iop(self, "search radius", GTK_WIDGET(g->nbhood));
-  dt_accel_connect_slider_iop(self, "scattering", GTK_WIDGET(g->scattering));
-  dt_accel_connect_slider_iop(self, "central pixel weight", GTK_WIDGET(g->central_pixel_weight));
-  dt_accel_connect_combobox_iop(self, "mode", GTK_WIDGET(g->mode));
 }
 
 typedef union floatint_t
@@ -1003,372 +1018,6 @@ static void compute_wb_factors(float wb[3],const dt_iop_denoiseprofile_data_t *c
   return;
 }
 
-
-// =====================================================================================
-// begin wavelet code:
-// =====================================================================================
-
-static inline float weight(const float *c1, const float *c2, const float inv_sigma2)
-{
-  // 3d distance based on color
-  float sqr[3];
-  for(int c = 0; c < 3; c++)
-  {
-    float diff = c1[c] - c2[c];
-    sqr[c] = diff * diff;
-  }
-  const float dot = (sqr[0] + sqr[1] + sqr[2]) * inv_sigma2;
-  const float var
-      = 0.02f; // FIXME: this should ideally depend on the image before noise stabilizing transforms!
-  const float off2 = 9.0f; // (3 sigma)^2
-  return fast_mexp2f(MAX(0, dot * var - off2));
-}
-
-#if defined(__SSE__)
-static inline float weight_sse(const __m128 *c1, const __m128 *c2, const float inv_sigma2)
-{
-  // 3d distance based on color
-  __m128 diff = _mm_sub_ps(*c1, *c2);
-  __m128 sqr = _mm_mul_ps(diff, diff);
-  const float dot = (sqr[0] + sqr[1] + sqr[2]) * inv_sigma2;
-  const float var
-      = 0.02f; // FIXME: this should ideally depend on the image before noise stabilizing transforms!
-  const float off2 = 9.0f; // (3 sigma)^2
-  return fast_mexp2f(MAX(0, dot * var - off2));
-}
-#endif
-
-#ifdef __SSE2__
-# define PREFETCH(p) _mm_prefetch(p,_MM_HINT_NTA);
-#else
-# define PREFETCH(p)
-#endif /* __SSE2__ */
-
-#define SUM_PIXEL_CONTRIBUTION(ii, jj) 		                                                             \
-  do                                                                                                         \
-  {                                                                                                          \
-    PREFETCH(px2+8);                                                                                         \
-    const float f = filter[(ii)] * filter[(jj)];                                                             \
-    const float wp = weight(px, px2, inv_sigma2);                                                            \
-    const float w = f * wp;                                                                                  \
-    float pd[4];                                                                                             \
-    for(int c = 0; c < 4; c++) pd[c] = w * px2[c];                                                           \
-    for(int c = 0; c < 4; c++) sum[c] += pd[c];                                                              \
-    for(int c = 0; c < 4; c++) wgt[c] += w;                                                                  \
-  } while(0)
-
-#if defined(__SSE__)
-#define SUM_PIXEL_CONTRIBUTION_SSE(ii, jj)	                                                             \
-  do                                                                                                         \
-  {                                                                                                          \
-    PREFETCH(px2+2);                                                                                         \
-    const float f = filter[(ii)] * filter[(jj)];	                                                     \
-    const float wp = weight_sse(px, px2, inv_sigma2);                                                        \
-    const __m128 w = _mm_set1_ps(f * wp);                                                                    \
-    const __m128 pd = *px2 * w;                                                                              \
-    sum = sum + pd;                                                                                          \
-    wgt = wgt + w;                                                                                           \
-  } while(0)
-#endif
-
-#define SUM_PIXEL_PROLOGUE                                                                                   \
-  float sum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };                                                                 \
-  float wgt[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-
-#if defined(__SSE__)
-#define SUM_PIXEL_PROLOGUE_SSE                                                                               \
-  __m128 sum = _mm_setzero_ps();                                                                             \
-  __m128 wgt = _mm_setzero_ps();
-#endif
-
-#define SUM_PIXEL_EPILOGUE                                                                                   \
-  for(int c = 0; c < 4; c++)										     \
-  {													     \
-    sum[c] /= wgt[c];                                                   				     \
-    pcoarse[c] = sum[c];                                                                                     \
-    float det = (px[c] - sum[c]);									     \
-    pdetail[c] = det;    		                                              			     \
-    sum_sq[c] += (det*det);					                                             \
-  }                                                                       				     \
-  px += 4;                                                                                                   \
-  pdetail += 4;                                                                                              \
-  pcoarse += 4;
-
-#if defined(__SSE__)
-#define SUM_PIXEL_EPILOGUE_SSE                                                                               \
-  sum = sum / wgt;		                                                                             \
-  _mm_stream_ps(pcoarse, sum);                                                                               \
-  sum = *px - sum;											     \
-  _mm_stream_ps(pdetail, sum);                                                                               \
-  sum_sq = sum_sq + sum*sum;					                                             \
-  px++;                                                                                                      \
-  pdetail += 4;                                                                                              \
-  pcoarse += 4;
-#endif
-
-typedef void((*eaw_decompose_t)(float *const out, const float *const in, float *const detail,
-                                float sum_squared[4], const int scale,
-                                const float inv_sigma2, const int32_t width, const int32_t height));
-
-static void eaw_decompose(float *const out, const float *const in, float *const detail, float sum_squared[4],
-                          const int scale, const float inv_sigma2, const int32_t width, const int32_t height)
-{
-  const int mult = 1u << scale;
-  static const float filter[5] = { 1.0f / 16.0f, 4.0f / 16.0f, 6.0f / 16.0f, 4.0f / 16.0f, 1.0f / 16.0f };
-  const int boundary = 2 * mult;
-  const int nthreads = dt_get_num_threads();
-  float *squared_sums = dt_alloc_align(64,3*sizeof(float)*nthreads);
-  for(int i = 0; i < 3*nthreads; i++)
-    squared_sums[i] = 0.0f;
-
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(detail, filter, height, in, inv_sigma2, mult, boundary, out, width, squared_sums) \
-  schedule(static)
-#endif
-  for(int j = 0; j < height; j++)
-  {
-    const float *px = ((float *)in) + (size_t)4 * j * width;
-    const float *px2;
-    float *pdetail = detail + (size_t)4 * j * width;
-    float *pcoarse = out + (size_t)4 * j * width;
-    float sum_sq[4] = { 0 };
-
-    // for the first and last 'boundary' rows, we have to perform boundary tests for the entire row;
-    //   for the central bulk, we only need to use those slower versions on the leftmost and rightmost pixels
-    const int lbound = (j < boundary || j >= height - boundary) ? width-boundary : boundary;
-
-    /* The first "2*mult" pixels need a boundary check because we might try to access past the left edge,
-     * which requires nearest pixel interpolation */
-    int i;
-    for(i = 0; i < lbound; i++)
-    {
-      SUM_PIXEL_PROLOGUE;
-      for(int jj = 0; jj < 5; jj++)
-      {
-        const int y = j + mult * (jj-2);
-        const int clamp_y = CLAMP(y,0,height-1);
-        for(int ii = 0; ii < 5; ii++)
-        {
-          int x = i + mult * ((ii)-2);
-          if(x < 0) x = 0;			// we might be looking past the left edge
-          px2 = ((float *)in) + 4 * x + (size_t)4 * clamp_y * width;
-          SUM_PIXEL_CONTRIBUTION(ii, jj);
-        }
-      }
-      SUM_PIXEL_EPILOGUE;
-    }
-
-    /* For pixels [2*mult, width-2*mult], we don't need to do any boundary checks */
-    for( ; i < width - boundary; i++)
-    {
-      SUM_PIXEL_PROLOGUE;
-      px2 = ((float *)in) + (size_t)4 * (i - 2 * mult + (size_t)(j - 2 * mult) * width);
-      for(int jj = 0; jj < 5; jj++)
-      {
-        for(int ii = 0; ii < 5; ii++)
-        {
-          SUM_PIXEL_CONTRIBUTION(ii, jj);
-          px2 += (size_t)4 * mult;
-        }
-        px2 += (size_t)4 * (width - 5) * mult;
-      }
-      SUM_PIXEL_EPILOGUE;
-    }
-
-    /* Last 2*mult pixels in the row require the boundary check again */
-    for( ; i < width; i++)
-    {
-      SUM_PIXEL_PROLOGUE;
-      for(int jj = 0; jj < 5; jj++)
-      {
-        const int y = j + mult * (jj-2);
-        const int clamp_y = CLAMP(y,0,height-1);
-        for(int ii = 0; ii < 5; ii++)
-        {
-          int x = i + mult * ((ii)-2);
-          if(x >= width) x = width - 1;		// we might be looking past the right edge
-          px2 = ((float *)in) + 4 * x + (size_t)4 * clamp_y * width;
-          SUM_PIXEL_CONTRIBUTION(ii, jj);
-        }
-      }
-      SUM_PIXEL_EPILOGUE;
-    }
-    int tnum = dt_get_thread_num();
-    for(i = 0; i < 3; i++)
-      squared_sums[3*tnum+i] += sum_sq[i];
-  }
-  // reduce the per-thread sums to a single value
-  for(int c = 0; c < 3; c++)
-  {
-    sum_squared[c] = 0.0f;
-    for(int i = 0; i < nthreads; i++)
-      sum_squared[c] += squared_sums[3*i+c];
-  }
-  dt_free_align(squared_sums);
-}
-
-#undef SUM_PIXEL_CONTRIBUTION
-#undef SUM_PIXEL_PROLOGUE
-#undef SUM_PIXEL_EPILOGUE
-
-#if defined(__SSE2__)
-static void eaw_decompose_sse(float *const out, const float *const in, float *const detail, float sum_squared[4],
-                              const int scale, const float inv_sigma2, const int32_t width, const int32_t height)
-{
-  const int mult = 1u << scale;
-  static const float filter[5] = { 1.0f / 16.0f, 4.0f / 16.0f, 6.0f / 16.0f, 4.0f / 16.0f, 1.0f / 16.0f };
-  const int boundary = 2 * mult;
-  const int nthreads = dt_get_num_threads();
-  __m128 *squared_sums = dt_alloc_align(64,sizeof(__m128)*nthreads);
-  for(int i = 0; i < nthreads; i++)
-    squared_sums[i] = _mm_setzero_ps();
-
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(detail, filter, height, in, inv_sigma2, mult, boundary, out, width) \
-  shared(squared_sums) \
-  schedule(static)
-#endif
-  for(int j = 0; j < height; j++)
-  {
-    const __m128 *px = ((__m128 *)in) + (size_t)j * width;
-    const __m128 *px2;
-    float *pdetail = detail + (size_t)4 * j * width;
-    float *pcoarse = out + (size_t)4 * j * width;
-    __m128 sum_sq = _mm_setzero_ps();
-
-    // for the first and last 'boundary' rows, we have to use the macros with tests for the entire row;
-    //   for the central bulk, we only need to use those slower versions on the leftmost and rightmost pixels
-    const int lbound = (j < boundary || j >= height - boundary) ? width-boundary : boundary;
-
-    /* The first "2*mult" pixels need a boundary check because we might try to access past the left edge,
-     * which requires nearest pixel interpolation */
-    int i;
-    for(i = 0; i < lbound; i++)
-    {
-      SUM_PIXEL_PROLOGUE_SSE;
-      for(int jj = 0; jj < 5; jj++)
-      {
-        const int y = j + mult * (jj-2);
-        const int clamp_y = CLAMP(y,0,height-1);
-        for(int ii = 0; ii < 5; ii++)
-        {
-          int x = i + mult * ((ii)-2);
-          if(x < 0) x = 0;			// we might be looking beyond the left edge
-          px2 = ((__m128 *)in) + x + (size_t)clamp_y * width;
-          SUM_PIXEL_CONTRIBUTION_SSE(ii, jj);
-        }
-      }
-      SUM_PIXEL_EPILOGUE_SSE;
-    }
-
-    /* For pixels [2*mult, width-2*mult], we don't need to do any boundary checks */
-    for( ; i < width - boundary; i++)
-    {
-      SUM_PIXEL_PROLOGUE_SSE;
-      px2 = ((__m128 *)in) + i - 2 * mult + (size_t)(j - 2 * mult) * width;
-      for(int jj = 0; jj < 5; jj++)
-      {
-        for(int ii = 0; ii < 5; ii++)
-        {
-          SUM_PIXEL_CONTRIBUTION_SSE(ii, jj);
-          px2 += mult;
-        }
-        px2 += (width - 5) * mult;
-      }
-      SUM_PIXEL_EPILOGUE_SSE;
-    }
-
-    /* Last 2*mult pixels in the row require the boundary check again */
-    for( ; i < width; i++)
-    {
-      SUM_PIXEL_PROLOGUE_SSE;
-      for(int jj = 0; jj < 5; jj++)
-      {
-        const int y = j + mult * (jj-2);
-        const int clamp_y = CLAMP(y,0,height-1);
-        for(int ii = 0; ii < 5; ii++)
-        {
-          int x = i + mult * ((ii)-2);
-          if(x >= width) x = width-1;		// we might be looking beyond the right edge
-          px2 = ((__m128 *)in) + x + (size_t)clamp_y * width;
-          SUM_PIXEL_CONTRIBUTION_SSE(ii, jj);
-        }
-      }
-      SUM_PIXEL_EPILOGUE_SSE;
-    }
-    squared_sums[dt_get_thread_num()] += sum_sq;
-  }
-  // reduce the per-thread sums to a single value
-  __m128 sum = _mm_setzero_ps();
-  for(int i = 0; i < nthreads; i++)
-    sum += squared_sums[i];
-  dt_free_align(squared_sums);
-  _mm_store_ps(sum_squared, sum);
-  _mm_sfence();
-}
-
-#undef SUM_PIXEL_CONTRIBUTION_SSE
-#undef SUM_PIXEL_PROLOGUE_SSE
-#undef SUM_PIXEL_EPILOGUE_SSE
-#endif
-
-
-typedef void((*eaw_synthesize_t)(float *const out, const float *const in, const float *const detail,
-                                 const float *thrsf, const float *boostf, const int32_t width,
-                                 const int32_t height));
-
-static void eaw_synthesize(float *const out, const float *const in, const float *const detail,
-                           const float *thrsf, const float *boostf, const int32_t width, const int32_t height)
-{
-  const float threshold[4] = { thrsf[0], thrsf[1], thrsf[2], thrsf[3] };
-  const float boost[4] = { boostf[0], boostf[1], boostf[2], boostf[3] };
-
-#ifdef _OPENMP
-#pragma omp parallel for SIMD() default(none) \
-  dt_omp_firstprivate(boost, detail, height, in, out, threshold, width) \
-  schedule(static) \
-  collapse(2)
-#endif
-  for(size_t k = 0; k < (size_t)4 * width * height; k += 4)
-  {
-    for(size_t c = 0; c < 4; c++)
-    {
-      const float absamt = MAX(0.0f, (fabsf(detail[k + c]) - threshold[c]));
-      const float amount = copysignf(absamt, detail[k + c]);
-      out[k + c] = in[k + c] + (boost[c] * amount);
-    }
-  }
-}
-
-#if defined(__SSE2__)
-static void eaw_synthesize_sse2(float *const out, const float *const in, const float *const detail,
-                                const float *thrsf, const float *boostf, const int32_t width,
-                                const int32_t height)
-{
-  const __m128 threshold = _mm_set_ps(thrsf[3], thrsf[2], thrsf[1], thrsf[0]);
-  const __m128 boost = _mm_set_ps(boostf[3], boostf[2], boostf[1], boostf[0]);
-  const __m128i maski = _mm_set1_epi32(0x80000000u);
-  const __m128 *mask = (__m128 *)&maski;
-
-#ifdef _OPENMP
-#pragma omp parallel for default(none) \
-  dt_omp_firstprivate(boost, detail, height, in, out, threshold, width, maski, mask) \
-  schedule(static)
-#endif
-  for(size_t j = 0; j < width * height; j++)
-  {
-    const __m128 *pin = (__m128 *)in + j;
-    const __m128 *pdetail = (__m128 *)detail + j;
-    const __m128 absamt = _mm_max_ps(_mm_setzero_ps(), _mm_andnot_ps(*mask, *pdetail) - threshold);
-    const __m128 amount = _mm_or_ps(_mm_and_ps(*pdetail, *mask), absamt);
-    _mm_stream_ps(out + 4*j, *pin + boost * amount);
-  }
-  _mm_sfence();
-}
-#endif
-
 // =====================================================================================
 
 static gboolean invert_matrix(const float in[9], float out[9])
@@ -1454,7 +1103,7 @@ static void set_up_conversion_matrices(float toY0U0V0[9], float toRGB[9], float 
 
 static void process_wavelets(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece,
                              const void *const ivoid, void *const ovoid, const dt_iop_roi_t *const roi_in,
-                             const dt_iop_roi_t *const roi_out, const eaw_decompose_t decompose,
+                             const dt_iop_roi_t *const roi_out, const eaw_dn_decompose_t decompose,
                              const eaw_synthesize_t synthesize)
 {
   // this is called for preview and full pipe separately, each with its own pixelpipe piece.
@@ -1673,17 +1322,17 @@ static void process_wavelets(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_
       adjt[2] *= band_force_exp_2;
     }
 
-    const float thrs[4] = { adjt[0] * sb2 / std_x[0], adjt[1] * sb2 / std_x[1], adjt[2] * sb2 / std_x[2], 0.0f };
+    const float DT_ALIGNED_PIXEL thrs[4] = { adjt[0] * sb2 / std_x[0],
+                                             adjt[1] * sb2 / std_x[1],
+                                             adjt[2] * sb2 / std_x[2],
+                                             0.0f };
 // const float std = (std_x[0] + std_x[1] + std_x[2])/3.0f;
 // const float thrs[4] = { adjt*sigma*sigma/std, adjt*sigma*sigma/std, adjt*sigma*sigma/std, 0.0f};
 // fprintf(stderr, "scale %d thrs %f %f %f = %f / %f %f %f \n", scale, thrs[0], thrs[1], thrs[2], sb2,
 // std_x[0], std_x[1], std_x[2]);
 #endif
-    const float boost[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    // const float thrs[4] = { 0.0, 0.0, 0.0, 0.0 };
+    const float DT_ALIGNED_PIXEL boost[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     synthesize(buf2, buf1, buf[scale], thrs, boost, width, height);
-    // DEBUG: clean out temporary memory:
-    // memset(buf1, 0, sizeof(float)*4*width*height);
 
     float *buf3 = buf2;
     buf2 = buf1;
@@ -1776,7 +1425,7 @@ static float nlmeans_precondition(const dt_iop_denoiseprofile_data_t *const d,
   p[0] = MAX(d->shadows + 0.1 * logf(scale / wb[0]), 0.0f);
   p[1] = MAX(d->shadows + 0.1 * logf(scale / wb[1]), 0.0f);
   p[2] = MAX(d->shadows + 0.1 * logf(scale / wb[2]), 0.0f);
-  
+
   // update the coeffs with strength and scale
   for(int i = 0; i < 3; i++)
   {
@@ -1813,7 +1462,7 @@ static float nlmeans_precondition_cl(const dt_iop_denoiseprofile_data_t *const d
   p[1] = MAX(d->shadows + 0.1 * logf(scale / wb[1]), 0.0f);
   p[2] = MAX(d->shadows + 0.1 * logf(scale / wb[2]), 0.0f);
   p[3] = 1.0f;
-  
+
   // update the coeffs with strength and scale
   for(int i = 0; i < 3; i++)
   {
@@ -2510,7 +2159,7 @@ static int process_wavelets_cl(struct dt_iop_module_t *self, dt_dev_pixelpipe_io
   const float wb_weights[3] = { 2.0f, 1.0f, 2.0f };
   compute_wb_factors(wb,d,piece,wb_weights);
   wb[3] = 0.0f;
-  
+
   // adaptive p depending on white balance
   const float p[4] = { MAX(d->shadows + 0.1 * logf(scale / wb[0]), 0.0f),
                        MAX(d->shadows + 0.1 * logf(scale / wb[1]), 0.0f),
@@ -2897,7 +2546,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   if(d->mode == MODE_NLMEANS || d->mode == MODE_NLMEANS_AUTO)
     process_nlmeans(self, piece, ivoid, ovoid, roi_in, roi_out);
   else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
-    process_wavelets(self, piece, ivoid, ovoid, roi_in, roi_out, eaw_decompose, eaw_synthesize);
+    process_wavelets(self, piece, ivoid, ovoid, roi_in, roi_out, eaw_dn_decompose, eaw_synthesize);
   else
     process_variance(self, piece, ivoid, ovoid, roi_in, roi_out);
 }
@@ -2910,7 +2559,7 @@ void process_sse2(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, c
   if(d->mode == MODE_NLMEANS || d->mode == MODE_NLMEANS_AUTO)
     process_nlmeans_sse(self, piece, ivoid, ovoid, roi_in, roi_out);
   else if(d->mode == MODE_WAVELETS || d->mode == MODE_WAVELETS_AUTO)
-    process_wavelets(self, piece, ivoid, ovoid, roi_in, roi_out, eaw_decompose_sse, eaw_synthesize_sse2);
+    process_wavelets(self, piece, ivoid, ovoid, roi_in, roi_out, eaw_dn_decompose_sse, eaw_synthesize_sse2);
   else
     process_variance(self, piece, ivoid, ovoid, roi_in, roi_out);
 }
@@ -2934,6 +2583,21 @@ static inline float infer_shadows_from_profile(const float a)
 static inline float infer_bias_from_profile(const float a)
 {
   return -MAX(5 + 0.5 * logf(a), 0.0);
+}
+
+void init(dt_iop_module_t *module)
+{
+  dt_iop_default_init(module);
+
+  dt_iop_denoiseprofile_params_t *d = module->default_params;
+
+  for(int k = 0; k < DT_IOP_DENOISE_PROFILE_BANDS; k++)
+  {
+    for(int ch = 0; ch < DT_DENOISE_PROFILE_NONE; ch++)
+    {
+      d->x[ch][k] = k / (DT_IOP_DENOISE_PROFILE_BANDS - 1.f);
+    }
+  }
 }
 
 /** this will be called to init new defaults if a new image is loaded from film strip mode. */
@@ -2987,24 +2651,23 @@ void reload_defaults(dt_iop_module_t *module)
     // set defaults depending on the profile
     // all these formulas were "guessed" and are completely empirical
     const float a = g->interpolated.a[1];
-    dt_iop_denoiseprofile_params_t *default_params = module->default_params;
-    default_params->radius = infer_radius_from_profile(a);
-    default_params->scattering = infer_scattering_from_profile(a);
-    default_params->shadows = infer_shadows_from_profile(a);
-    default_params->bias = infer_bias_from_profile(a);
+    dt_iop_denoiseprofile_params_t *d = module->default_params;
+
+    d->radius = infer_radius_from_profile(a);
+    d->scattering = infer_scattering_from_profile(a);
+    d->shadows = infer_shadows_from_profile(a);
+    d->bias = infer_bias_from_profile(a);
+
+    dt_bauhaus_slider_set_default(g->radius, d->radius);
+    dt_bauhaus_slider_set_default(g->scattering, d->scattering);
+    dt_bauhaus_slider_set_default(g->shadows, d->shadows);
+    dt_bauhaus_slider_set_default(g->bias, d->bias);
+
     for(int k = 0; k < 3; k++)
     {
-      default_params->a[k] = g->interpolated.a[k];
-      default_params->b[k] = g->interpolated.b[k];
+      d->a[k] = g->interpolated.a[k];
+      d->b[k] = g->interpolated.b[k];
     }
-    for(int k = 0; k < DT_IOP_DENOISE_PROFILE_BANDS; k++)
-    {
-      for(int ch = 0; ch < DT_DENOISE_PROFILE_NONE; ch++)
-      {
-        default_params->x[ch][k] = k / (DT_IOP_DENOISE_PROFILE_BANDS - 1.f);
-      }
-    }
-    memcpy(module->params, module->default_params, sizeof(dt_iop_denoiseprofile_params_t));
   }
 }
 
@@ -3158,7 +2821,6 @@ void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pi
     for(int k = 0; k < DT_IOP_DENOISE_PROFILE_BANDS; k++)
       (void)dt_draw_curve_add_point(d->curve[ch], default_params->x[ch][k], default_params->y[ch][k]);
   }
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -3301,9 +2963,9 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
 
 void gui_update(dt_iop_module_t *self)
 {
-  // let gui slider match current parameters:
   dt_iop_denoiseprofile_gui_data_t *g = (dt_iop_denoiseprofile_gui_data_t *)self->gui_data;
   dt_iop_denoiseprofile_params_t *p = (dt_iop_denoiseprofile_params_t *)self->params;
+
   dt_bauhaus_slider_set_soft(g->radius, p->radius);
   dt_bauhaus_slider_set_soft(g->nbhood, p->nbhood);
   dt_bauhaus_slider_set_soft(g->strength, p->strength);
@@ -3368,10 +3030,6 @@ void gui_update(dt_iop_module_t *self)
     dt_bauhaus_slider_set(g->shadows, infer_shadows_from_profile(a * gain));
     dt_bauhaus_slider_set(g->bias, infer_bias_from_profile(a * gain));
   }
-  dt_bauhaus_slider_set_default(g->radius, infer_radius_from_profile(a));
-  dt_bauhaus_slider_set_default(g->scattering, infer_scattering_from_profile(a));
-  dt_bauhaus_slider_set_default(g->shadows, infer_shadows_from_profile(a));
-  dt_bauhaus_slider_set_default(g->bias, infer_bias_from_profile(a));
   dt_bauhaus_combobox_set(g->mode, combobox_index);
   dt_bauhaus_combobox_set(g->wavelet_color_mode, p->wavelet_color_mode);
   if(p->a[0] == -1.0)
@@ -3819,9 +3477,8 @@ static void denoiseprofile_tab_switch(GtkNotebook *notebook, GtkWidget *page, gu
 
 void gui_init(dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_denoiseprofile_gui_data_t));
-  dt_iop_denoiseprofile_gui_data_t *g = (dt_iop_denoiseprofile_gui_data_t *)self->gui_data;
-  dt_iop_denoiseprofile_params_t *p = (dt_iop_denoiseprofile_params_t *)self->params;
+  dt_iop_denoiseprofile_gui_data_t *g = IOP_GUI_ALLOC(denoiseprofile);
+  dt_iop_denoiseprofile_params_t *p = (dt_iop_denoiseprofile_params_t *)self->default_params;
 
   g->profiles = NULL;
 
@@ -3889,32 +3546,31 @@ void gui_init(dt_iop_module_t *self)
 
   g->box_variance = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
 
-  g->label_var = GTK_LABEL(gtk_label_new(_("use only with a perfectly\n"
-                                           "uniform image if you want to\n"
-                                           "estimate the noise variance.")));
-  gtk_widget_set_halign(GTK_WIDGET(g->label_var), GTK_ALIGN_START);
+  g->label_var = GTK_LABEL(dt_ui_label_new(_("use only with a perfectly\n"
+                                             "uniform image if you want to\n"
+                                             "estimate the noise variance.")));
   gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(g->label_var), TRUE, TRUE, 0);
 
   GtkBox *hboxR = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
-  GtkLabel *labelR = GTK_LABEL(gtk_label_new(_("variance red: ")));
+  GtkLabel *labelR = GTK_LABEL(dt_ui_label_new(_("variance red: ")));
   gtk_box_pack_start(GTK_BOX(hboxR), GTK_WIDGET(labelR), FALSE, FALSE, 0);
-  g->label_var_R = GTK_LABEL(gtk_label_new("")); // This gets filled in by process
+  g->label_var_R = GTK_LABEL(dt_ui_label_new("")); // This gets filled in by process
   gtk_widget_set_tooltip_text(GTK_WIDGET(g->label_var_R), _("variance computed on the red channel"));
   gtk_box_pack_start(GTK_BOX(hboxR), GTK_WIDGET(g->label_var_R), FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(hboxR), TRUE, TRUE, 0);
 
   GtkBox *hboxG = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
-  GtkLabel *labelG = GTK_LABEL(gtk_label_new(_("variance green: ")));
+  GtkLabel *labelG = GTK_LABEL(dt_ui_label_new(_("variance green: ")));
   gtk_box_pack_start(GTK_BOX(hboxG), GTK_WIDGET(labelG), FALSE, FALSE, 0);
-  g->label_var_G = GTK_LABEL(gtk_label_new("")); // This gets filled in by process
+  g->label_var_G = GTK_LABEL(dt_ui_label_new("")); // This gets filled in by process
   gtk_widget_set_tooltip_text(GTK_WIDGET(g->label_var_G), _("variance computed on the green channel"));
   gtk_box_pack_start(GTK_BOX(hboxG), GTK_WIDGET(g->label_var_G), FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(hboxG), TRUE, TRUE, 0);
 
   GtkBox *hboxB = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
-  GtkLabel *labelB = GTK_LABEL(gtk_label_new(_("variance blue: ")));
+  GtkLabel *labelB = GTK_LABEL(dt_ui_label_new(_("variance blue: ")));
   gtk_box_pack_start(GTK_BOX(hboxB), GTK_WIDGET(labelB), FALSE, FALSE, 0);
-  g->label_var_B = GTK_LABEL(gtk_label_new("")); // This gets filled in by process
+  g->label_var_B = GTK_LABEL(dt_ui_label_new("")); // This gets filled in by process
   gtk_widget_set_tooltip_text(GTK_WIDGET(g->label_var_B), _("variance computed on the blue channel"));
   gtk_box_pack_start(GTK_BOX(hboxB), GTK_WIDGET(g->label_var_B), FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(g->box_variance), GTK_WIDGET(hboxB), TRUE, TRUE, 0);
@@ -3925,14 +3581,14 @@ void gui_init(dt_iop_module_t *self)
   self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
 
   g->profile = dt_bauhaus_combobox_new(self);
-  dt_bauhaus_widget_set_label(g->profile, NULL, _("profile"));
+  dt_bauhaus_widget_set_label(g->profile, NULL, N_("profile"));
   g_signal_connect(G_OBJECT(g->profile), "value-changed", G_CALLBACK(profile_callback), self);
   gtk_box_pack_start(GTK_BOX(self->widget), g->profile, TRUE, TRUE, 0);
 
   g->wb_adaptive_anscombe = dt_bauhaus_toggle_from_params(self, "wb_adaptive_anscombe");
 
   g->mode = dt_bauhaus_combobox_new(self);
-  dt_bauhaus_widget_set_label(g->mode, NULL, _("mode"));
+  dt_bauhaus_widget_set_label(g->mode, NULL, N_("mode"));
   dt_bauhaus_combobox_add(g->mode, _("non-local means"));
   dt_bauhaus_combobox_add(g->mode, _("non-local means auto"));
   dt_bauhaus_combobox_add(g->mode, _("wavelets"));
@@ -3960,12 +3616,8 @@ void gui_init(dt_iop_module_t *self)
   gtk_box_pack_start(GTK_BOX(self->widget), g->box_variance, TRUE, TRUE, 0);
 
   g->fix_anscombe_and_nlmeans_norm = dt_bauhaus_toggle_from_params(self, "fix_anscombe_and_nlmeans_norm");
-  
+
   g->use_new_vst = dt_bauhaus_toggle_from_params(self, "use_new_vst");
-  
-  gtk_widget_show_all(g->box_nlm);
-  gtk_widget_show_all(g->box_wavelets);
-  gtk_widget_show_all(g->box_variance);
 
   gtk_widget_set_tooltip_text(g->wb_adaptive_anscombe, _("adapt denoising according to the\n"
                                                          "white balance coefficients.\n"
@@ -4027,8 +3679,8 @@ void gui_cleanup(dt_iop_module_t *self)
   g_list_free_full(g->profiles, dt_noiseprofile_free);
   dt_draw_curve_destroy(g->transition_curve);
   // nothing else necessary, gtk will clean up the slider.
-  free(self->gui_data);
-  self->gui_data = NULL;
+
+  IOP_GUI_FREE;
 }
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh

@@ -84,6 +84,11 @@ const char *name()
   return _("velvia");
 }
 
+const char *aliases()
+{
+  return _("saturation");
+}
+
 int flags()
 {
   return IOP_FLAGS_INCLUDE_IN_STYLES | IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING;
@@ -91,7 +96,7 @@ int flags()
 
 int default_group()
 {
-  return IOP_GROUP_COLOR;
+  return IOP_GROUP_COLOR | IOP_GROUP_GRADING;
 }
 
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -99,20 +104,13 @@ int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_p
   return iop_cs_rgb;
 }
 
-void init_key_accels(dt_iop_module_so_t *self)
+const char *description(struct dt_iop_module_t *self)
 {
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "strength"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "mid-tones bias"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_velvia_gui_data_t *g = (dt_iop_velvia_gui_data_t*)self->gui_data;
-
-  dt_accel_connect_slider_iop(self, "strength",
-                              GTK_WIDGET(g->strength_scale));
-  dt_accel_connect_slider_iop(self, "mid-tones bias",
-                              GTK_WIDGET(g->bias_scale));
+  return dt_iop_set_description(self, _("resaturate giving more weight to blacks, whites and low-saturation pixels"),
+                                      _("creative"),
+                                      _("linear, RGB, scene-referred"),
+                                      _("linear, RGB"),
+                                      _("linear, RGB, scene-referred"));
 }
 
 int legacy_params(dt_iop_module_t *self, const void *const old_params, const int old_version,
@@ -318,7 +316,6 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pix
 void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   piece->data = calloc(1, sizeof(dt_iop_velvia_data_t));
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -329,17 +326,15 @@ void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev
 
 void gui_update(struct dt_iop_module_t *self)
 {
-  dt_iop_module_t *module = (dt_iop_module_t *)self;
   dt_iop_velvia_gui_data_t *g = (dt_iop_velvia_gui_data_t *)self->gui_data;
-  dt_iop_velvia_params_t *p = (dt_iop_velvia_params_t *)module->params;
+  dt_iop_velvia_params_t *p = (dt_iop_velvia_params_t *)self->params;
   dt_bauhaus_slider_set(g->strength_scale, p->strength);
   dt_bauhaus_slider_set(g->bias_scale, p->bias);
 }
 
 void gui_init(struct dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_velvia_gui_data_t));
-  dt_iop_velvia_gui_data_t *g = (dt_iop_velvia_gui_data_t *)self->gui_data;
+  dt_iop_velvia_gui_data_t *g = IOP_GUI_ALLOC(velvia);
 
   g->strength_scale = dt_bauhaus_slider_from_params(self, N_("strength"));
   dt_bauhaus_slider_set_format(g->strength_scale, "%.0f%%");

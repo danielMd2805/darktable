@@ -21,6 +21,7 @@
 #include "common/darktable.h"
 #include "common/interpolation.h"
 #include "common/opencl.h"
+#include "common/image_cache.h"
 #include "control/conf.h"
 #include "control/control.h"
 #include "develop/develop.h"
@@ -96,13 +97,11 @@ typedef struct dt_iop_demosaic_params_t
 
 typedef struct dt_iop_demosaic_gui_data_t
 {
-  GtkWidget *box_raw;
   GtkWidget *median_thrs;
   GtkWidget *greeneq;
   GtkWidget *color_smoothing;
   GtkWidget *demosaic_method_bayer;
   GtkWidget *demosaic_method_xtrans;
-  GtkWidget *label_non_raw;
 } dt_iop_demosaic_gui_data_t;
 
 typedef struct dt_iop_demosaic_global_data_t
@@ -171,9 +170,18 @@ const char *name()
   return _("demosaic");
 }
 
+const char *description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("reconstruct full RGB pixels from a sensor color filter array reading"),
+                                      _("mandatory"),
+                                      _("linear, raw, scene-referred"),
+                                      _("linear, raw"),
+                                      _("linear, RGB, scene-referred"));
+}
+
 int default_group()
 {
-  return IOP_GROUP_BASIC;
+  return IOP_GROUP_BASIC | IOP_GROUP_TECHNICAL;
 }
 
 int flags()
@@ -184,26 +192,6 @@ int flags()
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   return iop_cs_RAW;
-}
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "edge threshold"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "method (bayer)"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "method (xtrans)"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "color smoothing"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "match greens"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_demosaic_gui_data_t *g = (dt_iop_demosaic_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_slider_iop(self, "edge threshold", GTK_WIDGET(g->median_thrs));
-  dt_accel_connect_combobox_iop(self, "method (bayer)", GTK_WIDGET(g->demosaic_method_bayer));
-  dt_accel_connect_combobox_iop(self, "method (xtrans)", GTK_WIDGET(g->demosaic_method_xtrans));
-  dt_accel_connect_combobox_iop(self, "color smoothing", GTK_WIDGET(g->color_smoothing));
-  dt_accel_connect_combobox_iop(self, "match greens", GTK_WIDGET(g->greeneq));
 }
 
 int legacy_params(dt_iop_module_t *self, const void *const old_params, const int old_version,
@@ -423,7 +411,7 @@ static void green_equilibration_lavg(float *out, const float *const in, const in
 #pragma omp parallel for default(none) \
   dt_omp_firstprivate(height, in, thr, width, maximum) \
   shared(out, oi, oj) \
-  schedule(static)
+  schedule(static) collapse(2)
 #endif
   for(size_t j = oj; j < height - 2; j += 2)
   {
@@ -473,7 +461,7 @@ static void green_equilibration_favg(float *out, const float *const in, const in
   dt_omp_firstprivate(g2_offset, height, in, width) \
   reduction(+ : sum1, sum2) \
   shared(oi, oj) \
-  schedule(static)
+  schedule(static) collapse(2)
 #endif
   for(size_t j = oj; j < (height - 1); j += 2)
   {
@@ -493,7 +481,7 @@ static void green_equilibration_favg(float *out, const float *const in, const in
 #pragma omp parallel for default(none) \
   dt_omp_firstprivate(g2_offset, height, in, width) \
   shared(out, oi, oj, gr_ratio) \
-  schedule(static)
+  schedule(static) collapse(2)
 #endif
   for(int j = oj; j < (height - 1); j += 2)
   {
@@ -2428,7 +2416,7 @@ static void passthrough_monochrome(float *out, const float *const in, dt_iop_roi
 #pragma omp parallel for default(none) \
   dt_omp_firstprivate(in, roi_out, roi_in) \
   shared(out) \
-  schedule(static)
+  schedule(static) collapse(2)
 #endif
   for(int j = 0; j < roi_out->height; j++)
   {
@@ -2465,7 +2453,7 @@ static void passthrough_color(float *out, const float *const in, dt_iop_roi_t *c
       for(int col = 0; col < (roi_out->width); col++)
       {
         const float val = in[col + roi_out->x + ((row + roi_out->y) * roi_in->width)];
-        const uint32_t offset = (size_t)4 * ((size_t)row * roi_out->width + col);     
+        const uint32_t offset = (size_t)4 * ((size_t)row * roi_out->width + col);
         const uint32_t ch = FC(row + roi_out->y, col + roi_out->x, filters);
 
         out[offset] = out[offset + 1] = out[offset + 2] = 0.0f;
@@ -2488,7 +2476,7 @@ static void passthrough_color(float *out, const float *const in, dt_iop_roi_t *c
       for(int col = 0; col < (roi_out->width); col++)
       {
         const float val = in[col + roi_out->x + ((row + roi_out->y) * roi_in->width)];
-        const uint32_t offset = (size_t)4 * ((size_t)row * roi_out->width + col);     
+        const uint32_t offset = (size_t)4 * ((size_t)row * roi_out->width + col);
         const uint32_t ch = FCxtrans(row, col, roi_in, xtrans);
 
         out[offset] = out[offset + 1] = out[offset + 2] = 0.0f;
@@ -2895,7 +2883,7 @@ void process(struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, const 
   if((qual_flags & DEMOSAIC_MEDIUM_QUAL)
   // only overwrite setting if quality << requested and in dr mode and not a special method
   && (demosaicing_method != DT_IOP_DEMOSAIC_PASSTHROUGH_MONOCHROME)
-  && (demosaicing_method != DT_IOP_DEMOSAIC_PASSTHROUGH_COLOR)) 
+  && (demosaicing_method != DT_IOP_DEMOSAIC_PASSTHROUGH_COLOR))
     demosaicing_method = (piece->pipe->dsc.filters != 9u) ? DT_IOP_DEMOSAIC_PPG : DT_IOP_DEMOSAIC_MARKESTEIJN;
 
   const float *const pixels = (float *)i;
@@ -4888,7 +4876,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
     d->color_smoothing = 0;
     d->median_thrs = 0.0f;
   }
-  
+
   if(d->demosaicing_method == DT_IOP_DEMOSAIC_AMAZE)
   {
     d->median_thrs = 0.0f;
@@ -4938,7 +4926,7 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
 
     // Get and store the matrix to go from camera to RGB for 4Bayer images
     char *camera = self->dev->image_storage.camera_makermodel;
-    if (!dt_colorspaces_conversion_matrices_rgb(camera, NULL, d->CAM_to_RGB, NULL))
+    if (!dt_colorspaces_conversion_matrices_rgb(camera, NULL, d->CAM_to_RGB, self->dev->image_storage.d65_color_matrix, NULL))
     {
       fprintf(stderr, "[colorspaces] `%s' color matrix not found for 4bayer image!\n", camera);
       dt_control_log(_("`%s' color matrix not found for 4bayer image!"), camera);
@@ -4949,7 +4937,6 @@ void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *params, dt_dev
 void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   piece->data = malloc(sizeof(dt_iop_demosaic_data_t));
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -4983,58 +4970,53 @@ void gui_update(struct dt_iop_module_t *self)
   if((p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHROUGH_MONOCHROME) ||
      (p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHROUGH_COLOR) ||
      (p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHR_MONOX) ||
-     (p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHR_COLORX))   
+     (p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHR_COLORX))
   {
     gtk_widget_hide(g->median_thrs);
     gtk_widget_hide(g->color_smoothing);
     gtk_widget_hide(g->greeneq);
   }
-  
+
   if(p->demosaicing_method == DT_IOP_DEMOSAIC_AMAZE || p->demosaicing_method == DT_IOP_DEMOSAIC_VNG4)
   {
     gtk_widget_hide(g->median_thrs);
   }
 
+  dt_image_t *img = dt_image_cache_get(darktable.image_cache, self->dev->image_storage.id, 'w');
+  int changed = img->flags & DT_IMAGE_MONOCHROME_BAYER;
+  if((p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHROUGH_MONOCHROME) ||
+     (p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHR_MONOX))
+    img->flags |= DT_IMAGE_MONOCHROME_BAYER;
+  else
+    img->flags &= ~DT_IMAGE_MONOCHROME_BAYER;
+  const int mask_bw = dt_image_monochrome_flags(img);
+  changed ^= img->flags & DT_IMAGE_MONOCHROME_BAYER;
+
+  dt_image_cache_write_release(darktable.image_cache, img, DT_IMAGE_CACHE_RELAXED);
+  if(changed)
+    dt_imageio_update_monochrome_workflow_tag(self->dev->image_storage.id, mask_bw);
+
   dt_bauhaus_slider_set(g->median_thrs, p->median_thrs);
   dt_bauhaus_combobox_set(g->color_smoothing, p->color_smoothing);
   dt_bauhaus_combobox_set(g->greeneq, p->green_eq);
 
-  if(self->default_enabled)
-  {
-    gtk_widget_show(g->box_raw);
-    gtk_widget_hide(g->label_non_raw);
-  }
-  else
-  {
-    gtk_widget_hide(g->box_raw);
-    gtk_widget_show(g->label_non_raw);
-  }
+  gtk_stack_set_visible_child_name(GTK_STACK(self->widget), self->default_enabled ? "raw" : "non_raw");
 }
 
 void reload_defaults(dt_iop_module_t *module)
 {
-  // we might be called from presets update infrastructure => there is no image
-  if(!module->dev) return;
-
-  dt_iop_demosaic_params_t *d = module->default_params;
+  dt_iop_demosaic_params_t *d = (dt_iop_demosaic_params_t *)module->default_params;
 
   if(dt_image_is_monochrome(&module->dev->image_storage))
     d->demosaicing_method = DT_IOP_DEMOSAIC_PASSTHROUGH_MONOCHROME;
+  else if(module->dev->image_storage.buf_dsc.filters == 9u)
+    d->demosaicing_method = DT_IOP_DEMOSAIC_MARKESTEIJN;
+  else
+    d->demosaicing_method = DT_IOP_DEMOSAIC_PPG;
 
   module->hide_enable_button = 1;
 
-  // only on for raw images:
-  if(dt_image_is_raw(&module->dev->image_storage))
-    module->default_enabled = 1;
-  else
-  {
-    module->default_enabled = 0;
-  }
-
-  if(module->dev->image_storage.buf_dsc.filters == 9u)
-    d->demosaicing_method = DT_IOP_DEMOSAIC_MARKESTEIJN;
-
-  memcpy(module->params, module->default_params, sizeof(dt_iop_demosaic_params_t));
+  module->default_enabled = dt_image_is_raw(&module->dev->image_storage);
 }
 
 void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
@@ -5046,12 +5028,25 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
     (p->demosaicing_method != DT_IOP_DEMOSAIC_PASSTHROUGH_MONOCHROME) &&
     (p->demosaicing_method != DT_IOP_DEMOSAIC_PASSTHROUGH_COLOR) &&
     (p->demosaicing_method != DT_IOP_DEMOSAIC_PASSTHR_MONOX) &&
-    (p->demosaicing_method != DT_IOP_DEMOSAIC_PASSTHR_COLORX);   
+    (p->demosaicing_method != DT_IOP_DEMOSAIC_PASSTHR_COLORX);
 
   if(w == g->demosaic_method_bayer)
   {
     gtk_widget_set_visible(g->median_thrs, p->demosaicing_method == DT_IOP_DEMOSAIC_PPG);
   }
+
+  dt_image_t *img = dt_image_cache_get(darktable.image_cache, self->dev->image_storage.id, 'w');
+  int changed = img->flags & DT_IMAGE_MONOCHROME_BAYER;
+  if((p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHROUGH_MONOCHROME) ||
+     (p->demosaicing_method == DT_IOP_DEMOSAIC_PASSTHR_MONOX))
+    img->flags |= DT_IMAGE_MONOCHROME_BAYER;
+  else
+    img->flags &= ~DT_IMAGE_MONOCHROME_BAYER;
+  const int mask_bw = dt_image_monochrome_flags(img);
+  changed ^= img->flags & DT_IMAGE_MONOCHROME_BAYER;
+  dt_image_cache_write_release(darktable.image_cache, img, DT_IMAGE_CACHE_RELAXED);
+  if(changed)
+    dt_imageio_update_monochrome_workflow_tag(self->dev->image_storage.id, mask_bw);
 
   gtk_widget_set_visible(g->color_smoothing, extras);
   gtk_widget_set_visible(g->greeneq, extras);
@@ -5059,10 +5054,9 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
 
 void gui_init(struct dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_demosaic_gui_data_t));
-  dt_iop_demosaic_gui_data_t *g = (dt_iop_demosaic_gui_data_t *)self->gui_data;
+  dt_iop_demosaic_gui_data_t *g = IOP_GUI_ALLOC(demosaic);
 
-  g->box_raw = self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
+  GtkWidget *box_raw = self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
 
   g->demosaic_method_bayer = dt_bauhaus_combobox_from_params(self, "demosaicing_method");
   for(int i=0;i<6;i++) dt_bauhaus_combobox_remove_at(g->demosaic_method_bayer, 5);
@@ -5090,13 +5084,14 @@ void gui_init(struct dt_iop_module_t *self)
   g->greeneq = dt_bauhaus_combobox_from_params(self, "green_eq");
   gtk_widget_set_tooltip_text(g->greeneq, _("green channels matching method"));
 
-  self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
+  // start building top level widget
+  self->widget = gtk_stack_new();
+  gtk_stack_set_homogeneous(GTK_STACK(self->widget), FALSE);
 
-  gtk_box_pack_start(GTK_BOX(self->widget), g->box_raw, FALSE, FALSE, 0);
+  GtkWidget *label_non_raw = dt_ui_label_new(_("demosaicing\nonly needed for raw images."));
 
-  g->label_non_raw = gtk_label_new(_("demosaicing\nonly needed for raw images."));
-  gtk_widget_set_halign(g->label_non_raw, GTK_ALIGN_START);
-  gtk_box_pack_start(GTK_BOX(self->widget), g->label_non_raw, FALSE, FALSE, 0);
+  gtk_stack_add_named(GTK_STACK(self->widget), label_non_raw, "non_raw");
+  gtk_stack_add_named(GTK_STACK(self->widget), box_raw, "raw");
 }
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh

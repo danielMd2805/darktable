@@ -59,6 +59,9 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
                                            uint32_t state, dt_masks_form_t *form, int parentid,
                                            dt_masks_form_gui_t *gui, int index)
 {
+  const float max_mask_border = form->type & (DT_MASKS_CLONE | DT_MASKS_NON_CLONE) ? 0.5f : 1.0f;
+  const float max_mask_size = form->type & (DT_MASKS_CLONE | DT_MASKS_NON_CLONE) ? 0.5f : 1.0f;
+
   // add a preview when creating a circle
   if(gui->creation)
   {
@@ -73,7 +76,7 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
 
       if(up && masks_border > 0.0005f)
         masks_border *= 0.97f;
-      else if(!up && masks_border < 1.0f)
+      else if(!up && masks_border < max_mask_border)
         masks_border *= 1.0f / 0.97f;
 
       if(form->type & (DT_MASKS_CLONE | DT_MASKS_NON_CLONE))
@@ -92,7 +95,7 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
 
       if(up && masks_size > 0.001f)
         masks_size *= 0.97f;
-      else if(!up && masks_size < 1.0f)
+      else if(!up && masks_size < max_mask_size)
         masks_size *= 1.0f / 0.97f;
 
       if(form->type & (DT_MASKS_CLONE | DT_MASKS_NON_CLONE))
@@ -124,7 +127,7 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
       {
         if(up && circle->border > 0.0005f)
           circle->border *= 0.97f;
-        else if(!up && circle->border < 1.0f)
+        else if(!up && circle->border < max_mask_border)
           circle->border *= 1.0f / 0.97f;
         else
           return 1;
@@ -140,7 +143,7 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
       {
         if(up && circle->radius > 0.001f)
           circle->radius *= 0.97f;
-        else if(!up && circle->radius < 1.0f)
+        else if(!up && circle->radius < max_mask_size)
           circle->radius *= 1.0f / 0.97f;
         else
           return 1;
@@ -161,15 +164,6 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
     return 1;
   }
   return 0;
-}
-
-static float dt_conf_get_sanitize_set(const char *name, float min, float max)
-{
-  float value = dt_conf_get_float(name);
-  value = MIN(max, value);
-  value = MAX(min, value);
-  dt_conf_set_float(name, value);
-  return value;
 }
 
 static int dt_circle_events_button_pressed(struct dt_iop_module_t *module, float pzx, float pzy,
@@ -232,8 +226,8 @@ static int dt_circle_events_button_pressed(struct dt_iop_module_t *module, float
 
     if(form->type & (DT_MASKS_CLONE|DT_MASKS_NON_CLONE))
     {
-      circle->radius = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_size", 0.001f, 0.5f);
-      circle->border = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_border", 0.0005f, 0.5f);
+      circle->radius = dt_conf_get_float("plugins/darkroom/spots/circle_size");
+      circle->border = dt_conf_get_float("plugins/darkroom/spots/circle_border");
 
       // calculate the source position
       if(form->type & DT_MASKS_CLONE)
@@ -248,8 +242,8 @@ static int dt_circle_events_button_pressed(struct dt_iop_module_t *module, float
     }
     else
     {
-      circle->radius = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/size", 0.001f, 0.5f);
-      circle->border = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/border", 0.0005f, 0.5f);
+      circle->radius = dt_conf_get_float("plugins/darkroom/masks/circle/size");
+      circle->border = dt_conf_get_float("plugins/darkroom/masks/circle/border");
       // not used for masks
       form->source[0] = form->source[1] = 0.0f;
     }
@@ -505,7 +499,7 @@ static void dt_circle_events_post_expose(cairo_t *cr, float zoom_scale, dt_masks
   double dashed[] = { 4.0, 4.0 };
   dashed[0] /= zoom_scale;
   dashed[1] /= zoom_scale;
-  int len = sizeof(dashed) / sizeof(dashed[0]);
+  const int len = sizeof(dashed) / sizeof(dashed[0]);
   dt_masks_form_gui_points_t *gpt = (dt_masks_form_gui_points_t *)g_list_nth_data(gui->points, index);
 
   // add a preview when creating a circle
@@ -513,9 +507,9 @@ static void dt_circle_events_post_expose(cairo_t *cr, float zoom_scale, dt_masks
   if(gui->creation)
   {
     const float pr_d = darktable.develop->preview_downsampling;
-    float iwd = darktable.develop->preview_pipe->iwidth;
-    float iht = darktable.develop->preview_pipe->iheight;                                           
-    const float min_iwd_iht = pr_d * MIN(iwd,iht);                                                           
+    const float iwd = darktable.develop->preview_pipe->iwidth;
+    const float iht = darktable.develop->preview_pipe->iheight;
+    const float min_iwd_iht = pr_d * MIN(iwd,iht);
     if(gui->guipoints_count == 0)
     {
       dt_masks_form_t *form = darktable.develop->form_visible;
@@ -524,13 +518,13 @@ static void dt_circle_events_post_expose(cairo_t *cr, float zoom_scale, dt_masks
       float radius1 = 0.0f, radius2 = 0.0f;
       if(form->type & (DT_MASKS_CLONE | DT_MASKS_NON_CLONE))
       {
-        radius1 = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_size", 0.001f, 0.5f);
-        radius2 = dt_conf_get_sanitize_set("plugins/darkroom/spots/circle_border", 0.0005f, 0.5f);
+        radius1 = dt_conf_get_float("plugins/darkroom/spots/circle_size");
+        radius2 = dt_conf_get_float("plugins/darkroom/spots/circle_border");
       }
       else
       {
-        radius1 = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/size", 0.001f, 0.5f);
-        radius2 = dt_conf_get_sanitize_set("plugins/darkroom/masks/circle/border", 0.0005f, 0.5f);
+        radius1 = dt_conf_get_float("plugins/darkroom/masks/circle/size");
+        radius2 = dt_conf_get_float("plugins/darkroom/masks/circle/border");
       }
       radius2 += radius1;
       radius1 *= min_iwd_iht;
@@ -657,11 +651,12 @@ static void dt_circle_events_post_expose(cairo_t *cr, float zoom_scale, dt_masks
   // draw the source if any
   if(gpt->source_count > 6)
   {
+    const float pr_d = darktable.develop->preview_downsampling;
     const float radius = fabs(gpt->points[2] - gpt->points[0]);
 
     // compute the dest inner circle intersection with the line from source center to dest center.
-    float cdx = gpt->source[0] + dxs - gpt->points[0] - dx;
-    float cdy = gpt->source[1] + dys - gpt->points[1] - dy;
+    const float cdx = gpt->source[0] + dxs - gpt->points[0] - dx;
+    const float cdy = gpt->source[1] + dys - gpt->points[1] - dy;
 
     // we don't draw the line if source==point
     if(cdx != 0.0 && cdy != 0.0)
@@ -676,13 +671,13 @@ static void dt_circle_events_post_expose(cairo_t *cr, float zoom_scale, dt_masks
 
       // (arrowx,arrowy) is the point of intersection, we move it (factor 1.11) a bit farther than the
       // inner circle to avoid superposition.
-      float arrowx = gpt->points[0] + 1.11 * radius * cos(cangle) + dx;
-      float arrowy = gpt->points[1] + 1.11 * radius * sin(cangle) + dy;
+      const float arrowx = gpt->points[0] + 1.11 * radius * cos(cangle) + dx;
+      const float arrowy = gpt->points[1] + 1.11 * radius * sin(cangle) + dy;
 
       cairo_move_to(cr, gpt->source[0] + dxs, gpt->source[1] + dys); // source center
       cairo_line_to(cr, arrowx, arrowy);                             // dest border
       // then draw to line for the arrow itself
-      const float arrow_scale = 8.0;
+      const float arrow_scale = 6.0 * pr_d;
       cairo_move_to(cr, arrowx + arrow_scale * cos(cangle + (0.4)),
                     arrowy + arrow_scale * sin(cangle + (0.4)));
       cairo_line_to(cr, arrowx, arrowy);
@@ -1092,7 +1087,7 @@ static int dt_circle_get_mask_roi(dt_iop_module_t *module, dt_dev_pixelpipe_iop_
 #if !defined(__SUNOS__) && !defined(__NetBSD__)
 #pragma omp parallel for default(none) \
   dt_omp_firstprivate(iscale, bbxm, bbym, bbXM, bbYM, bbw, px, py, grid) \
-  shared(points)
+  shared(points) schedule(static) collapse(2)
 #else
 #pragma omp parallel for shared(points)
 #endif
@@ -1129,7 +1124,7 @@ static int dt_circle_get_mask_roi(dt_iop_module_t *module, dt_dev_pixelpipe_iop_
 #if !defined(__SUNOS__) && !defined(__NetBSD__)
 #pragma omp parallel for default(none) \
   dt_omp_firstprivate(bbh, bbw, center, radius2, total2) \
-  shared(points)
+  shared(points) schedule(static) collapse(2)
 #else
 #pragma omp parallel for shared(points)
 #endif
@@ -1165,7 +1160,7 @@ static int dt_circle_get_mask_roi(dt_iop_module_t *module, dt_dev_pixelpipe_iop_
 #if !defined(__SUNOS__) && !defined(__NetBSD__)
 #pragma omp parallel for default(none) \
   dt_omp_firstprivate(grid, bbxm, bbym, bbw, endx, endy, w) \
-  shared(buffer, points)
+  shared(buffer, points) schedule(static)
 #else
 #pragma omp parallel for shared(buffer)
 #endif

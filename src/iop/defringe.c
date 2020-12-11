@@ -69,9 +69,23 @@ const char *name()
   return _("defringe");
 }
 
+const char *aliases()
+{
+  return _("chromatic aberrations");
+}
+
+const char *description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("attenuate chromatic aberration by desaturating edges"),
+                                      _("corrective"),
+                                      _("linear or non-linear, Lab, display-referred"),
+                                      _("non-linear, Lab"),
+                                      _("non-linear, Lab, display-referred"));
+}
+
 int default_group()
 {
-  return IOP_GROUP_CORRECT;
+  return IOP_GROUP_CORRECT | IOP_GROUP_TECHNICAL;
 }
 
 int flags()
@@ -109,22 +123,6 @@ const dt_iop_roi_t *roi_out, dt_develop_tiling_t *tiling)
   return;
 }
 */
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "edge detection radius"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "threshold"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "operation mode"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_defringe_gui_data_t *g = (dt_iop_defringe_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_slider_iop(self, "edge detection radius", GTK_WIDGET(g->radius_scale));
-  dt_accel_connect_slider_iop(self, "threshold", GTK_WIDGET(g->thresh_scale));
-  dt_accel_connect_combobox_iop(self, "operation mode", GTK_WIDGET(g->mode_select));
-}
 
 // fibonacci lattice to select surrounding pixels for different cases
 static const float fib[] = { 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233 };
@@ -410,12 +408,11 @@ FINISH_PROCESS:
   free(xy_avg);
 }
 
-void gui_init(dt_iop_module_t *module)
+void gui_init(dt_iop_module_t *self)
 {
-  module->gui_data = malloc(sizeof(dt_iop_defringe_gui_data_t));
-  dt_iop_defringe_gui_data_t *g = (dt_iop_defringe_gui_data_t *)module->gui_data;
+  dt_iop_defringe_gui_data_t *g = IOP_GUI_ALLOC(defringe);
 
-  g->mode_select = dt_bauhaus_combobox_from_params(module, "op_mode");
+  g->mode_select = dt_bauhaus_combobox_from_params(self, "op_mode");
   gtk_widget_set_tooltip_text(g->mode_select,
       _("method for color protection:\n - global average: fast, might show slightly wrong previews in high "
         "magnification; might sometimes protect saturation too much or too low in comparison to local "
@@ -423,12 +420,10 @@ void gui_init(dt_iop_module_t *module)
         "near pixels as color reference, so it can still allow for more desaturation where required\n - "
         "static: fast, only uses the threshold as a static limit"));
 
-  g->radius_scale = dt_bauhaus_slider_from_params(module, "radius");
-  dt_bauhaus_widget_set_label(g->radius_scale, NULL, _("edge detection radius"));
+  g->radius_scale = dt_bauhaus_slider_from_params(self, "radius");
   gtk_widget_set_tooltip_text(g->radius_scale, _("radius for detecting fringe"));
 
-  g->thresh_scale = dt_bauhaus_slider_from_params(module, "thresh");
-  dt_bauhaus_widget_set_label(g->thresh_scale, NULL, _("threshold"));
+  g->thresh_scale = dt_bauhaus_slider_from_params(self, "thresh");
   gtk_widget_set_tooltip_text(g->thresh_scale, _("threshold for defringe, higher values mean less defringing"));
 }
 

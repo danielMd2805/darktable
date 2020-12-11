@@ -458,13 +458,13 @@ int dt_view_manager_switch_by_view(dt_view_manager_t *vm, const dt_view_t *nv)
   if(vm->accels_window.window && vm->accels_window.sticky) dt_view_accels_refresh(vm);
 
   /* raise view changed signal */
-  dt_control_signal_raise(darktable.signals, DT_SIGNAL_VIEWMANAGER_VIEW_CHANGED, old_view, new_view);
+  DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_VIEWMANAGER_VIEW_CHANGED, old_view, new_view);
 
   // update log visibility
-  dt_control_signal_raise(darktable.signals, DT_SIGNAL_CONTROL_LOG_REDRAW);
+  DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_CONTROL_LOG_REDRAW);
 
   // update toast visibility
-  dt_control_signal_raise(darktable.signals, DT_SIGNAL_CONTROL_TOAST_REDRAW);
+  DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_CONTROL_TOAST_REDRAW);
   return 0;
 }
 
@@ -964,10 +964,12 @@ int dt_view_image_get_surface(int imgid, int width, int height, cairo_surface_t 
   }
 
   // so we create a new image surface to return
-  const float scale = fminf(width / (float)buf_wd, height / (float)buf_ht);
+  const float scale = fminf(width / (float)buf_wd, height / (float)buf_ht) * darktable.gui->ppd_thb;
   const int img_width = buf_wd * scale;
   const int img_height = buf_ht * scale;
   *surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, img_width, img_height);
+
+  dt_print(DT_DEBUG_LIGHTTABLE, "[dt_view_image_get_surface]  id %i, dots %ix%i, mip %ix%i, surf %ix%i\n", imgid, width, height, buf_wd, buf_ht, img_width, img_height);
 
   // we transfer cached image on a cairo_surface (with colorspace transform if needed)
   cairo_surface_t *tmp_surface = NULL;
@@ -1074,22 +1076,48 @@ int dt_view_image_get_surface(int imgid, int width, int height, cairo_surface_t 
   return 0;
 }
 
-char* dt_view_extend_modes_str(const char * name, const gboolean is_hdr, const gboolean is_bw)
+char* dt_view_extend_modes_str(const char * name, const gboolean is_hdr, const gboolean is_bw, const gboolean is_bw_flow)
 {
   char* upcase = g_ascii_strup(name, -1);  // extension in capital letters to avoid character descenders
+  // convert to canonical format extension
+  if(0 == g_ascii_strcasecmp(upcase, "JPG"))
+  {
+      gchar* canonical = g_strdup("JPEG");
+      g_free(upcase);
+      upcase = canonical;
+  }
+  else if(0 == g_ascii_strcasecmp(upcase, "HDR"))
+  {
+      gchar* canonical = g_strdup("RGBE");
+      g_free(upcase);
+      upcase = canonical;
+  }
+  else if(0 == g_ascii_strcasecmp(upcase, "TIF"))
+  {
+      gchar* canonical = g_strdup("TIFF");
+      g_free(upcase);
+      upcase = canonical;
+  }
 
   if(is_hdr)
   {
-    gchar* fullname = g_strdup_printf("%s HDR",upcase);
+    gchar* fullname = g_strdup_printf("%s HDR", upcase);
     g_free(upcase);
     upcase = fullname;
   }
   if(is_bw)
   {
-    gchar* fullname = g_strdup_printf("%s B&W",upcase);
+    gchar* fullname = g_strdup_printf("%s B&W", upcase);
     g_free(upcase);
     upcase = fullname;
+    if(!is_bw_flow)
+    {
+      fullname = g_strdup_printf("%s-", upcase);
+      g_free(upcase);
+      upcase = fullname;
+    }
   }
+
   return upcase;
 }
 
@@ -1186,13 +1214,13 @@ void dt_view_active_images_reset(gboolean raise)
   g_slist_free(darktable.view_manager->active_images);
   darktable.view_manager->active_images = NULL;
 
-  if(raise) dt_control_signal_raise(darktable.signals, DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
+  if(raise) DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
 }
 void dt_view_active_images_add(int imgid, gboolean raise)
 {
   darktable.view_manager->active_images
       = g_slist_append(darktable.view_manager->active_images, GINT_TO_POINTER(imgid));
-  if(raise) dt_control_signal_raise(darktable.signals, DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
+  if(raise) DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_ACTIVE_IMAGES_CHANGE);
 }
 GSList *dt_view_active_images_get()
 {
@@ -1330,6 +1358,21 @@ gboolean dt_view_map_remove_marker(const dt_view_manager_t *vm, dt_geo_map_displ
   if(vm->proxy.map.view) return vm->proxy.map.remove_marker(vm->proxy.map.view, type, marker);
   return FALSE;
 }
+void dt_view_map_add_location(const dt_view_manager_t *vm, dt_map_location_data_t *p, const guint posid)
+{
+  if(vm->proxy.map.view) vm->proxy.map.add_location(vm->proxy.map.view, p, posid);
+}
+
+void dt_view_map_location_action(const dt_view_manager_t *vm, const int action)
+{
+  if(vm->proxy.map.view) return vm->proxy.map.location_action(vm->proxy.map.view, action);
+}
+
+void dt_view_map_drag_set_icon(const dt_view_manager_t *vm, GdkDragContext *context, const int imgid, const int count)
+{
+  if(vm->proxy.map.view) return vm->proxy.map.drag_set_icon(vm->proxy.map.view, context, imgid, count);
+}
+
 #endif
 
 #ifdef HAVE_PRINT

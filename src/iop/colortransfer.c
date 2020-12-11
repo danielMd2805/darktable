@@ -65,14 +65,14 @@ typedef enum dt_iop_colortransfer_flag_t
 
 typedef struct dt_iop_colortransfer_params_t
 {
-  dt_iop_colortransfer_flag_t flag;
+  dt_iop_colortransfer_flag_t flag; // $DEFAULT: NEUTRAL
   // hist matching table
   float hist[HISTN];
   // n-means (max 5?) with mean/variance
   float2 mean[MAXN];
   float2 var[MAXN];
   // number of gaussians used.
-  int n;
+  int n; // $DEFAULT: 3
 } dt_iop_colortransfer_params_t;
 
 typedef struct dt_iop_colortransfer_gui_data_t
@@ -104,12 +104,17 @@ const char *name()
 
 int default_group()
 {
-  return IOP_GROUP_COLOR;
+  return IOP_GROUP_COLOR | IOP_GROUP_EFFECTS;
 }
 
 int flags()
 {
   return IOP_FLAGS_DEPRECATED | IOP_FLAGS_ONE_INSTANCE | IOP_FLAGS_PREVIEW_NON_OPENCL;
+}
+
+const char *deprecated_msg()
+{
+  return _("this module is deprecated. better use color mapping module instead.");
 }
 
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -545,7 +550,6 @@ void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pi
   piece->data = malloc(sizeof(dt_iop_colortransfer_data_t));
   dt_iop_colortransfer_data_t *d = (dt_iop_colortransfer_data_t *)piece->data;
   d->flag = NEUTRAL;
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -564,32 +568,6 @@ void gui_update(struct dt_iop_module_t *self)
   // redraw color cluster preview
   dt_control_queue_redraw_widget(self->widget);
 #endif
-}
-
-void init(dt_iop_module_t *module)
-{
-  // module->data = malloc(sizeof(dt_iop_colortransfer_data_t));
-  module->params = calloc(1, sizeof(dt_iop_colortransfer_params_t));
-  module->default_params = calloc(1, sizeof(dt_iop_colortransfer_params_t));
-  module->default_enabled = 0;
-  module->params_size = sizeof(dt_iop_colortransfer_params_t);
-  module->gui_data = NULL;
-  dt_iop_colortransfer_params_t tmp;
-  tmp.flag = NEUTRAL;
-  memset(tmp.hist, 0, sizeof(float) * HISTN);
-  memset(tmp.mean, 0, sizeof(float) * MAXN * 2);
-  memset(tmp.var, 0, sizeof(float) * MAXN * 2);
-  tmp.n = 3;
-  memcpy(module->params, &tmp, sizeof(dt_iop_colortransfer_params_t));
-  memcpy(module->default_params, &tmp, sizeof(dt_iop_colortransfer_params_t));
-}
-
-void cleanup(dt_iop_module_t *module)
-{
-  free(module->params);
-  module->params = NULL;
-  free(module->default_params);
-  module->default_params = NULL;
 }
 
 #if 0
@@ -654,15 +632,13 @@ cluster_preview_draw (GtkWidget *widget, cairo_t *crf, dt_iop_module_t *self)
 
 void gui_init(struct dt_iop_module_t *self)
 {
+  IOP_GUI_ALLOC(colortransfer);
 
-  self->gui_data = malloc(sizeof(dt_iop_colortransfer_gui_data_t));
-  self->widget = gtk_label_new(_("this module will be removed in the future\nand is only here so you can "
-                                 "switch it off\nand move to the new color mapping module."));
-  gtk_widget_set_halign(self->widget, GTK_ALIGN_START);
+  self->widget = dt_ui_label_new(_("this module will be removed in the future\nand is only here so you can "
+                                   "switch it off\nand move to the new color mapping module."));
 
 #if 0
-  self->gui_data = malloc(sizeof(dt_iop_colortransfer_gui_data_t));
-  dt_iop_colortransfer_gui_data_t *g = (dt_iop_colortransfer_gui_data_t *)self->gui_data;
+  dt_iop_colortransfer_gui_data_t *g = IOP_GUI_ALLOC(colortransfer);
   // dt_iop_colortransfer_params_t *p = (dt_iop_colortransfer_params_t *)self->params;
 
   g->flowback_set = 0;

@@ -48,7 +48,7 @@ DT_MODULE_INTROSPECTION(1, dt_iop_lowlight_params_t)
 typedef struct dt_iop_lowlight_params_t
 {
   float blueness; // $MIN: 0.0 $MAX: 100.0 $DEFAULT: 0.0 $DESCRIPTION: "blue shift"
-  float transition_x[DT_IOP_LOWLIGHT_BANDS]; 
+  float transition_x[DT_IOP_LOWLIGHT_BANDS];
   float transition_y[DT_IOP_LOWLIGHT_BANDS]; // $DEFAULT: 0.5
 } dt_iop_lowlight_params_t;
 
@@ -86,6 +86,15 @@ const char *name()
   return _("lowlight vision");
 }
 
+const char *description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("simulate human night vision"),
+                                      _("creative"),
+                                      _("non-linear, Lab, display-referred"),
+                                      _("linear, XYZ"),
+                                      _("non-linear, Lab, display-referred"));
+}
+
 int flags()
 {
   return IOP_FLAGS_INCLUDE_IN_STYLES | IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING;
@@ -93,24 +102,12 @@ int flags()
 
 int default_group()
 {
-  return IOP_GROUP_EFFECT;
+  return IOP_GROUP_EFFECT | IOP_GROUP_EFFECTS;
 }
 
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
 {
   return iop_cs_Lab;
-}
-
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "blue shift"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_lowlight_gui_data_t *g = (dt_iop_lowlight_gui_data_t *)self->gui_data;
-  dt_accel_connect_slider_iop(self, "blue shift", g->scale_blueness);
 }
 
 static float lookup(const float *lut, const float i)
@@ -301,8 +298,6 @@ void init(dt_iop_module_t *module)
   dt_iop_lowlight_params_t *d = module->default_params;
 
   for(int k = 0; k < DT_IOP_LOWLIGHT_BANDS; k++) d->transition_x[k] = k / (DT_IOP_LOWLIGHT_BANDS - 1.0);
-
-  memcpy(module->params, module->default_params, sizeof(dt_iop_lowlight_params_t));
 }
 
 void init_presets(dt_iop_module_so_t *self)
@@ -326,7 +321,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 0.0f;
-  dt_gui_presets_add_generic(_("daylight"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("daylight"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.200000;
@@ -343,7 +339,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 30.0f;
-  dt_gui_presets_add_generic(_("indoor bright"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("indoor bright"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.200000;
@@ -360,7 +357,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 30.0f;
-  dt_gui_presets_add_generic(_("indoor dim"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("indoor dim"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.200000;
@@ -377,7 +375,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 40.0f;
-  dt_gui_presets_add_generic(_("indoor dark"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("indoor dark"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.200000;
@@ -394,7 +393,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 50.0f;
-  dt_gui_presets_add_generic(_("twilight"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("twilight"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.200000;
@@ -411,7 +411,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 30.0f;
-  dt_gui_presets_add_generic(_("night street lit"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("night street lit"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.200000;
@@ -428,7 +429,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 30.0f;
-  dt_gui_presets_add_generic(_("night street"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("night street"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.150000;
@@ -445,7 +447,8 @@ void init_presets(dt_iop_module_so_t *self)
   p.transition_y[5] = 1.000000;
 
   p.blueness = 40.0f;
-  dt_gui_presets_add_generic(_("night street dark"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("night street dark"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   p.transition_x[0] = 0.000000;
   p.transition_x[1] = 0.200000;
@@ -463,7 +466,8 @@ void init_presets(dt_iop_module_so_t *self)
 
 
   p.blueness = 50.0f;
-  dt_gui_presets_add_generic(_("night"), self->op, self->version(), &p, sizeof(p), 1);
+  dt_gui_presets_add_generic(_("night"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
 
   DT_DEBUG_SQLITE3_EXEC(dt_database_get(darktable.db), "COMMIT", NULL, NULL, NULL);
 }
@@ -745,7 +749,6 @@ static gboolean lowlight_button_press(GtkWidget *widget, GdkEventButton *event, 
     // reset current curve
     dt_iop_lowlight_params_t *p = (dt_iop_lowlight_params_t *)self->params;
     dt_iop_lowlight_params_t *d = (dt_iop_lowlight_params_t *)self->default_params;
-    /*   dt_iop_lowlight_gui_data_t *c = (dt_iop_lowlight_gui_data_t *)self->gui_data; */
     for(int k = 0; k < DT_IOP_LOWLIGHT_BANDS; k++)
     {
       p->transition_x[k] = d->transition_x[k];
@@ -811,9 +814,8 @@ static gboolean lowlight_scrolled(GtkWidget *widget, GdkEventScroll *event, gpoi
 
 void gui_init(struct dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_lowlight_gui_data_t));
-  dt_iop_lowlight_gui_data_t *c = (dt_iop_lowlight_gui_data_t *)self->gui_data;
-  dt_iop_lowlight_params_t *p = (dt_iop_lowlight_params_t *)self->params;
+  dt_iop_lowlight_gui_data_t *c = IOP_GUI_ALLOC(lowlight);
+  dt_iop_lowlight_params_t *p = (dt_iop_lowlight_params_t *)self->default_params;
 
   c->transition_curve = dt_draw_curve_new(0.0, 1.0, CATMULL_ROM);
   (void)dt_draw_curve_add_point(c->transition_curve, p->transition_x[DT_IOP_LOWLIGHT_BANDS - 2] - 1.0,
@@ -854,8 +856,8 @@ void gui_cleanup(struct dt_iop_module_t *self)
   dt_iop_lowlight_gui_data_t *c = (dt_iop_lowlight_gui_data_t *)self->gui_data;
   dt_draw_curve_destroy(c->transition_curve);
   dt_iop_cancel_history_update(self);
-  free(self->gui_data);
-  self->gui_data = NULL;
+
+  IOP_GUI_FREE;
 }
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh

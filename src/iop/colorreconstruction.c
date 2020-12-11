@@ -129,6 +129,15 @@ const char *name()
   return _("color reconstruction");
 }
 
+const char *description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("recover clipped highlights by propagating surrounding colors"),
+                                      _("corrective"),
+                                      _("linear or non-linear, Lab, display-referred"),
+                                      _("non-linear, Lab"),
+                                      _("non-linear, Lab, display-referred"));
+}
+
 int flags()
 {
   // we do not allow tiling. reason: this module needs to see the full surrounding of highlights.
@@ -138,7 +147,7 @@ int flags()
 
 int default_group()
 {
-  return IOP_GROUP_BASIC;
+  return IOP_GROUP_BASIC | IOP_GROUP_TECHNICAL;
 }
 
 int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -172,26 +181,6 @@ int legacy_params(dt_iop_module_t *self, const void *const old_params, const int
     return 0;
   }
   return 1;
-}
-
-void init_key_accels(dt_iop_module_so_t *self)
-{
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "threshold"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "spatial extent"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "range extent"));
-  dt_accel_register_slider_iop(self, FALSE, NC_("accel", "hue"));
-  dt_accel_register_combobox_iop(self, FALSE, NC_("accel", "precedence"));
-}
-
-void connect_key_accels(dt_iop_module_t *self)
-{
-  dt_iop_colorreconstruct_gui_data_t *g = (dt_iop_colorreconstruct_gui_data_t *)self->gui_data;
-
-  dt_accel_connect_slider_iop(self, "threshold", GTK_WIDGET(g->threshold));
-  dt_accel_connect_slider_iop(self, "spatial extent", GTK_WIDGET(g->spatial));
-  dt_accel_connect_slider_iop(self, "range extent", GTK_WIDGET(g->range));
-  dt_accel_connect_slider_iop(self, "hue", GTK_WIDGET(g->hue));
-  dt_accel_connect_combobox_iop(self, "precedence", GTK_WIDGET(g->precedence));
 }
 
 typedef struct dt_iop_colorreconstruct_bilateral_t
@@ -1231,7 +1220,6 @@ void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pi
 {
   dt_iop_colorreconstruct_data_t *d = (dt_iop_colorreconstruct_data_t *)calloc(1, sizeof(dt_iop_colorreconstruct_data_t));
   piece->data = (void *)d;
-  self->commit_params(self, self->default_params, pipe, piece);
 }
 
 void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -1242,9 +1230,9 @@ void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev
 
 void gui_update(struct dt_iop_module_t *self)
 {
-  dt_iop_module_t *module = (dt_iop_module_t *)self;
   dt_iop_colorreconstruct_gui_data_t *g = (dt_iop_colorreconstruct_gui_data_t *)self->gui_data;
-  dt_iop_colorreconstruct_params_t *p = (dt_iop_colorreconstruct_params_t *)module->params;
+  dt_iop_colorreconstruct_params_t *p = (dt_iop_colorreconstruct_params_t *)self->params;
+
   dt_bauhaus_slider_set(g->threshold, p->threshold);
   dt_bauhaus_slider_set(g->spatial, p->spatial);
   dt_bauhaus_slider_set(g->range, p->range);
@@ -1286,9 +1274,7 @@ void cleanup_global(dt_iop_module_so_t *module)
 
 void gui_init(struct dt_iop_module_t *self)
 {
-  self->gui_data = malloc(sizeof(dt_iop_colorreconstruct_gui_data_t));
-  dt_iop_colorreconstruct_gui_data_t *g = (dt_iop_colorreconstruct_gui_data_t *)self->gui_data;
-  dt_iop_colorreconstruct_params_t *p = (dt_iop_colorreconstruct_params_t *)self->params;
+  dt_iop_colorreconstruct_gui_data_t *g = IOP_GUI_ALLOC(colorreconstruct);
 
   dt_pthread_mutex_init(&g->lock, NULL);
   g->can = NULL;
@@ -1313,8 +1299,6 @@ void gui_init(struct dt_iop_module_t *self)
   gtk_widget_show_all(g->hue);
   gtk_widget_set_no_show_all(g->hue, TRUE);
 
-  gtk_widget_set_visible(g->hue, p->precedence == COLORRECONSTRUCT_PRECEDENCE_HUE);
-
   gtk_widget_set_tooltip_text(g->threshold, _("pixels with lightness values above this threshold are corrected"));
   gtk_widget_set_tooltip_text(g->spatial, _("how far to look for replacement colors in spatial dimensions"));
   gtk_widget_set_tooltip_text(g->range, _("how far to look for replacement colors in the luminance dimension"));
@@ -1327,8 +1311,8 @@ void gui_cleanup(struct dt_iop_module_t *self)
   dt_iop_colorreconstruct_gui_data_t *g = (dt_iop_colorreconstruct_gui_data_t *)self->gui_data;
   dt_pthread_mutex_destroy(&g->lock);
   dt_iop_colorreconstruct_bilateral_dump(g->can);
-  free(self->gui_data);
-  self->gui_data = NULL;
+
+  IOP_GUI_FREE;
 }
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh

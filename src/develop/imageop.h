@@ -59,15 +59,19 @@ typedef enum dt_iop_module_header_icons_t
 typedef enum dt_iop_group_t
 {
   IOP_GROUP_NONE = 0,
+  // pre 3.4 layout
   IOP_GROUP_BASIC = 1 << 0,
   IOP_GROUP_TONE = 1 << 1,
   IOP_GROUP_COLOR = 1 << 2,
   IOP_GROUP_CORRECT = 1 << 3,
   IOP_GROUP_EFFECT = 1 << 4,
-  IOP_SPECIAL_GROUP_ACTIVE_PIPE = 1 << 5,
-  IOP_SPECIAL_GROUP_USER_DEFINED = 1 << 6
+  // post 3.4 default layout
+  IOP_GROUP_TECHNICAL = 1 << 5,
+  IOP_GROUP_GRADING = 1 << 6,
+  IOP_GROUP_EFFECTS = 1 << 7,
+  // special group
+  IOP_SPECIAL_GROUP_ACTIVE_PIPE = 1 << 8
 } dt_iop_group_t;
-#define IOP_GROUP_ALL (IOP_GROUP_BASIC | IOP_GROUP_COLOR | IOP_GROUP_CORRECT | IOP_GROUP_EFFECT)
 
 /** module tags */
 typedef enum dt_iop_tags_t
@@ -99,7 +103,8 @@ typedef enum dt_iop_flags_t
   IOP_FLAGS_NO_HISTORY_STACK   = 1 << 9,  // This iop will never show up in the history stack
   IOP_FLAGS_NO_MASKS           = 1 << 10, // The module doesn't support masks (used with SUPPORT_BLENDING)
   IOP_FLAGS_FENCE              = 1 << 11, // No module can be moved pass this one
-  IOP_FLAGS_ALLOW_FAST_PIPE    = 1 << 12  // Module can work with a fast pipe
+  IOP_FLAGS_ALLOW_FAST_PIPE    = 1 << 12, // Module can work with a fast pipe
+  IOP_FLAGS_UNSAFE_COPY        = 1 << 13  // Unsafe to copy as part of history
 } dt_iop_flags_t;
 
 /** status of a module*/
@@ -131,7 +136,8 @@ typedef enum dt_iop_colorspace_type_t
   iop_cs_Lab = 1,
   iop_cs_rgb = 2,
   iop_cs_LCh = 3,
-  iop_cs_HSL = 4
+  iop_cs_HSL = 4,
+  iop_cs_JzCzhz = 5,
 } dt_iop_colorspace_type_t;
 
 /** part of the module which only contains the cached dlopen stuff. */
@@ -167,16 +173,19 @@ typedef struct dt_iop_module_so_t
   /** callbacks, loaded once, referenced by the instances. */
   int (*version)(void);
   const char *(*name)(void);
+  const char *(*aliases)(void);
   int (*default_group)(void);
   int (*flags)(void);
+  const char *(*deprecated_msg)(void);
 
-  const char *(*description)(void);
+  char *(*description)(struct dt_iop_module_t *self);
   /* should return a string with 5 lines:
      line 1 : summary of what it does
      line 2 : oriented creative or corrective ?
      line 3 : working space
      line 4 : input space
      line 5 : output space
+     => see helper routine dt_iop_set_description()
   */
 
   int (*operation_tags)(void);
@@ -331,8 +340,6 @@ typedef struct dt_iop_module_t
   dt_iop_colorspace_type_t histogram_cst;
   /** scale the histogram so the middle grey is at .5 */
   int histogram_middle_grey;
-  /** reference for dlopened libs. */
-  darktable_t *dt;
   /** the module is used in this develop module. */
   struct dt_develop_t *dev;
   /** non zero if this node should be processed. */
@@ -384,6 +391,8 @@ typedef struct dt_iop_module_t
   GSList *accel_closures;
   GSList *accel_closures_local;
   gboolean local_closures_connected;
+  /** flag in case the module has troubles (bad settings) - if TRUE, show a warning sign next to module label */
+  gboolean has_trouble;
   /** the corresponding SO object */
   dt_iop_module_so_t *so;
 
@@ -404,13 +413,17 @@ typedef struct dt_iop_module_t
   int (*version)(void);
   /** get name of the module, to be translated. */
   const char *(*name)(void);
+  /** get aliases names of the module, to be translated. */
+  const char *(*aliases)(void);
   /** get the default group this module belongs to. */
   int (*default_group)(void);
   /** get the iop module flags. */
   int (*flags)(void);
+  /** get deprecated message if needed */
+  const char *(*deprecated_msg)(void);
 
   /** get a descriptive text used for example in a tooltip in more modules */
-  const char *(*description)(void);
+  char *(*description)(struct dt_iop_module_t *self);
 
   int (*operation_tags)(void);
 
@@ -613,6 +626,8 @@ void dt_iop_request_focus(dt_iop_module_t *module);
 void dt_iop_default_init(dt_iop_module_t *module);
 /** loads default settings from database. */
 void dt_iop_load_default_params(dt_iop_module_t *module);
+/** creates the module's gui widget */
+void dt_iop_gui_init(dt_iop_module_t *module);
 /** reloads certain gui/param defaults when the image was switched. */
 void dt_iop_reload_defaults(dt_iop_module_t *module);
 
@@ -646,6 +661,7 @@ int get_module_flags(const char *op);
 
 /** returns the localized plugin name for a given op name. must not be freed. */
 gchar *dt_iop_get_localized_name(const gchar *op);
+gchar *dt_iop_get_localized_aliases(const gchar *op);
 
 /** Connects common accelerators to an iop module */
 void dt_iop_connect_common_accels(dt_iop_module_t *module);
@@ -676,10 +692,34 @@ dt_iop_module_t *dt_iop_get_module_accel_curr(dt_iop_module_so_t *module);
 /** count instances of a module **/
 int dt_iop_count_instances(dt_iop_module_so_t *module);
 
+/** queue a refresh of the center (FULL), preview, or second-preview windows, rerunning the pixelpipe from */
+/** the given module */
+void dt_iop_refresh_center(dt_iop_module_t *module);
+void dt_iop_refresh_preview(dt_iop_module_t *module);
+void dt_iop_refresh_preview2(dt_iop_module_t *module);
+void dt_iop_refresh_all(dt_iop_module_t *module);
+
 /** queue a delayed call to dt_dev_add_history_item to capture module parameters */
 void dt_iop_queue_history_update(dt_iop_module_t *module, gboolean extend_prior);
 /** cancel any previously-queued history update */
 void dt_iop_cancel_history_update(dt_iop_module_t *module);
+
+/** (un)hide iop module header right side buttons */
+gboolean dt_iop_show_hide_header_buttons(GtkWidget *header, GdkEventCrossing *event, gboolean show_buttons, gboolean always_hide);
+
+/** show in iop module header that the module is in trouble */
+void dt_iop_set_module_in_trouble(dt_iop_module_t *module, const gboolean);
+
+// format modules description going in tooltips
+char *dt_iop_set_description(dt_iop_module_t *module, const char *main_text,
+                             const char *purpose, const char *input,
+                             const char *process, const char *output);
+
+#define IOP_GUI_ALLOC(module) (dt_iop_##module##_gui_data_t *)(self->gui_data = calloc(1, sizeof(dt_iop_##module##_gui_data_t)))
+#define IOP_GUI_FREE free(self->gui_data); self->gui_data = NULL
+
+/* return a warning message, prefixed by the special character ⚠ */
+char *dt_iop_warning_message(char *message);
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh
 // vim: shiftwidth=2 expandtab tabstop=2 cindent

@@ -9,8 +9,10 @@ include(CheckCSourceCompiles)
 #
 FILE(GLOB SOURCE_FILES
   "bauhaus/bauhaus.c"
+  "common/atomic.c"
   "common/bilateral.c"
   "common/bilateralcl.c"
+  "common/box_filters.c"
   "common/cache.c"
   "common/calculator.c"
   "common/collection.c"
@@ -25,6 +27,7 @@ FILE(GLOB SOURCE_FILES
   "common/database.c"
   "common/dbus.c"
   "common/dtpthread.c"
+  "common/eaw.c"
   "common/exif.cc"
   "common/film.c"
   "common/file_location.c"
@@ -66,6 +69,7 @@ FILE(GLOB SOURCE_FILES
   "common/selection.c"
   "common/system_signal_handling.c"
   "common/tags.c"
+  "common/map_locations.c"
   "common/utility.c"
   "common/variables.c"
   "common/pwstorage/backend_kwallet.c"
@@ -99,6 +103,10 @@ FILE(GLOB SOURCE_FILES
   "develop/pixelpipe.c"
   "develop/blend.c"
   "develop/blend_gui.c"
+  "develop/blends/blendif_lab.c"
+  "develop/blends/blendif_raw.c"
+  "develop/blends/blendif_rgb_hsl.c"
+  "develop/blends/blendif_rgb_jzczhz.c"
   "develop/tiling.c"
   "common/dwt.c"
   "common/heal.c"
@@ -135,7 +143,13 @@ FILE(GLOB HEADER_FILES "*.h" "common/*.h" "external/OpenCL/CL/*.h" "control/*.h"
 if(APPLE)
   list(APPEND SOURCE_FILES "osx/osx.mm")
   list(APPEND HEADER_FILES "osx/osx.h")
-  set_source_files_properties(osx/osx.mm PROPERTIES LANGUAGE CXX)
+  include(CheckLanguage)
+  check_language(OBJCXX)
+  if(CMAKE_OBJCXX_COMPILER)
+    enable_language(OBJCXX)
+  else()
+    set_source_files_properties(osx/osx.mm PROPERTIES LANGUAGE CXX)
+  endif()
 endif(APPLE)
 
 if(WIN32)
@@ -326,7 +340,7 @@ if(USE_WEBP)
 endif(USE_WEBP)
 
 if (USE_AVIF)
-    find_package(libavif 0.7.2 CONFIG)
+    find_package(libavif 0.8.2 CONFIG)
     if (TARGET avif)
         list(APPEND LIBS avif)
         add_definitions(-DHAVE_LIBAVIF=1)
@@ -599,7 +613,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -D_DEBUG")
 # Generate config.h
 #
 string(REPLACE ";" "\", \"" DT_SUPPORTED_EXTENSIONS_STRING "${DT_SUPPORTED_EXTENSIONS}")
-configure_file("${CMAKE_CURRENT_SOURCE_DIR}/config.cmake.h" "${CMAKE_CURRENT_BINARY_DIR}/config.h" @ONLY)
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/config.cmake.h" "${DARKTABLE_BINDIR}/config.h" @ONLY)
 
 
 #
@@ -776,6 +790,13 @@ else(USE_GAME)
   message(STATUS "Game: no")
 endif(USE_GAME)
 
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  if(HAVE_EXECINFO_H)
+    add_definitions("-DDT_HAVE_SIGNAL_TRACE")
+    message(STATUS "Signal debug: print-trace possible")
+  endif(HAVE_EXECINFO_H)
+endif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+
 #
 # set development flags for our code
 #
@@ -789,18 +810,30 @@ endif()
 #
 if(NOT ${Xsltproc_BIN} STREQUAL "Xsltproc_BIN-NOTFOUND")
   add_custom_command(
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_prefs.xsl ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.dtd ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.xml
+    DEPENDS ${CMAKE_SOURCE_DIR}/tools/generate_prefs.xsl ${CMAKE_SOURCE_DIR}/data/darktableconfig.dtd ${DARKTABLE_DATADIR}/darktableconfig.xml
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
-    COMMAND ${Xsltproc_BIN} --nonet --stringparam HAVE_OPENCL ${HAVE_OPENCL} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_prefs.xsl ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.xml > ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
+    COMMAND ${Xsltproc_BIN} --nonet --stringparam HAVE_OPENCL ${HAVE_OPENCL} ${CMAKE_SOURCE_DIR}/tools/generate_prefs.xsl ${DARKTABLE_DATADIR}/darktableconfig.xml > ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
     COMMENT "Generating preferences"
+  )
+  add_custom_command(
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_darktablerc_conf.xsl ${DARKTABLE_DATADIR}/darktableconfig.dtd ${DARKTABLE_DATADIR}/darktableconfig.xml
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/conf_gen.h
+    COMMAND ${Xsltproc_BIN} --nonet --stringparam HAVE_OPENCL ${HAVE_OPENCL} ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_darktablerc_conf.xsl ${DARKTABLE_DATADIR}/darktableconfig.xml > ${CMAKE_CURRENT_BINARY_DIR}/conf_gen.h
+    COMMENT "Generating configuration min/max/default/type"
   )
 else(NOT ${Xsltproc_BIN} STREQUAL "Xsltproc_BIN-NOTFOUND")
   if(NOT ${Saxon_BIN} STREQUAL "Saxon_BIN-NOTFOUND")
     add_custom_command(
-      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_prefs.xsl ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.dtd ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.xml
+      DEPENDS ${CMAKE_SOURCE_DIR}/tools/generate_prefs.xsl ${CMAKE_SOURCE_DIR}/data/darktableconfig.dtd ${DARKTABLE_DATADIR}/darktableconfig.xml
       OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
-      COMMAND ${Saxon_BIN} ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.xml ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_prefs.xsl HAVE_OPENCL=${HAVE_OPENCL} > ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
+      COMMAND ${Saxon_BIN} ${DARKTABLE_DATADIR}/darktableconfig.xml ${CMAKE_SOURCE_DIR}/tools/generate_prefs.xsl HAVE_OPENCL=${HAVE_OPENCL} > ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
       COMMENT "Generating preferences"
+    )
+    add_custom_command(
+      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_darktablerc_conf.xsl ${DARKTABLE_DATADIR}/darktableconfig.dtd ${DARKTABLE_DATADIR}/darktableconfig.xml
+      OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/conf_gen.h
+      COMMAND ${Saxon_BIN} ${DARKTABLE_DATADIR}/darktableconfig.xml ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_darktablerc_conf.xsl HAVE_OPENCL=${HAVE_OPENCL} > ${CMAKE_CURRENT_BINARY_DIR}/conf_gen.h
+      COMMENT "Generating configuration min/max/default/type"
     )
   else(NOT ${Saxon_BIN} STREQUAL "Saxon_BIN-NOTFOUND")
     message(FATAL_ERROR "Don't know how to generate preferences")
@@ -809,21 +842,26 @@ endif(NOT ${Xsltproc_BIN} STREQUAL "Xsltproc_BIN-NOTFOUND")
 
 add_custom_target(
   generate_preferences ALL
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_prefs.xsl ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.dtd ${CMAKE_CURRENT_BINARY_DIR}/../data/darktableconfig.xml ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
+  DEPENDS ${CMAKE_SOURCE_DIR}/tools/generate_prefs.xsl ${CMAKE_SOURCE_DIR}/data/darktableconfig.dtd ${DARKTABLE_DATADIR}/darktableconfig.xml ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+add_custom_target(
+  generate_conf ALL
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_darktablerc_conf.xsl ${DARKTABLE_DATADIR}/darktableconfig.dtd ${DARKTABLE_DATADIR}/darktableconfig.xml ${CMAKE_CURRENT_BINARY_DIR}/conf_gen.h
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
 if(USE_XMLLINT)
-  add_dependencies(generate_preferences validate_darktableconfig_xml)
+  add_dependencies(generate_preferences validate_darktableconfig_xml generate_conf)
 endif(USE_XMLLINT)
 
 #
 # build libdarktable
 #
-add_library(lib_darktable SHARED ${CMAKE_CURRENT_BINARY_DIR}/preferences_gen.h ${CMAKE_BINARY_DIR}/src/version_gen.c ${SOURCES})
+add_library(lib_darktable SHARED ${DARKTABLE_BINDIR}/preferences_gen.h ${DARKTABLE_BINDIR}/version_gen.c ${SOURCES})
 
 # cmake implicitly sets GENERATED on the source file in the directory of the custom command
 # since this isn't the same directory we do have to manually set it
-set_source_files_properties(${CMAKE_BINARY_DIR}/src/version_gen.c PROPERTIES GENERATED TRUE)
+set_source_files_properties(${DARKTABLE_BINDIR}/version_gen.c PROPERTIES GENERATED TRUE)
 
 add_dependencies(lib_darktable generate_version)
 add_dependencies(lib_darktable generate_preferences)
@@ -844,6 +882,7 @@ endif()
 
 target_link_libraries(lib_darktable PUBLIC ${STATIC_LIBS})
 target_link_libraries(lib_darktable PRIVATE rawspeed)
+target_link_libraries(lib_darktable PRIVATE whereami)
 target_link_libraries(lib_darktable PUBLIC ${LIBS})
 
 unset(LIBS)
@@ -861,16 +900,16 @@ else(WIN32)
 endif(WIN32)
 
 # Compile views modules
-add_subdirectory(views)
+add_subdirectory(views ${DARKTABLE_LIBDIR}/views)
 
 # Compile lighttable modules
-add_subdirectory(libs)
+add_subdirectory(libs ${DARKTABLE_LIBDIR}/plugins/lighttable)
 
 # Compile darkroom modules
-add_subdirectory(iop)
+add_subdirectory(iop ${DARKTABLE_LIBDIR}/plugins)
 
 # Compile export modules
-add_subdirectory(imageio)
+add_subdirectory(imageio ${DARKTABLE_LIBDIR}/plugins/imageio)
 
 if(HAVE_OPENCL)
   # have a small test program, to be run as root on some systems to enable the driver to run cl stuff

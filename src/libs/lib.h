@@ -19,6 +19,7 @@
 #pragma once
 
 #include "common/darktable.h"
+#include "common/colorspaces.h"
 #include "views/view.h"
 #include <gmodule.h>
 #include <gtk/gtk.h>
@@ -71,8 +72,7 @@ typedef struct dt_lib_t
       void (*process)(struct dt_lib_module_t *self, const float *const input,
                       int width, int height,
                       dt_colorspaces_color_profile_type_t icc_type, const gchar *icc_filename);
-      // FIXME: should this be a function or just a boolean which histogram lib keeps updated?
-      // FIXME: should this be a darktable-level value, set by lib/histogram.c and noticed by iops?
+      // FIXME: now that PR #5532 is merged, define this as dt_atomic_int and include "common/atomic.h" and use dt_atomic_set_int() and dt_atomic_get_int()
       gboolean is_linear;
     } histogram;
   } proxy;
@@ -84,8 +84,6 @@ typedef struct dt_lib_module_t
 
   /** opened module. */
   GModule *module;
-  /** reference for dlopened libs. */
-  darktable_t *dt;
   /** other stuff that may be needed by the module, not only in gui mode. */
   void *data;
   /** string identifying this operation. */
@@ -146,6 +144,7 @@ typedef struct dt_lib_module_t
   void *(*get_params)(struct dt_lib_module_t *self, int *size);
   int (*set_params)(struct dt_lib_module_t *self, const void *params, int size);
   void (*init_presets)(struct dt_lib_module_t *self);
+  void (*manage_presets)(struct dt_lib_module_t *self);
   /** Optional callbacks for keyboard accelerators */
   void (*init_key_accels)(struct dt_lib_module_t *self);
   void (*connect_key_accels)(struct dt_lib_module_t *self);
@@ -185,12 +184,23 @@ gchar *dt_lib_get_localized_name(const gchar *plugin_name);
 
 /** add or replace a preset for this operation. */
 void dt_lib_presets_add(const char *name, const char *plugin_name, const int32_t version, const void *params,
-                        const int32_t params_size);
+                        const int32_t params_size, gboolean readonly);
 
 /** queue a delayed call of update function after user interaction */
 void dt_lib_queue_postponed_update(dt_lib_module_t *mod, void (*update_fn)(dt_lib_module_t *self));
 /** cancel any previously-queued callback */
 void dt_lib_cancel_postponed_update(dt_lib_module_t *mod);
+
+// apply a preset to the given module
+gboolean dt_lib_presets_apply(const gchar *preset, gchar *module_name, int module_version);
+// duplicate a preset
+gchar *dt_lib_presets_duplicate(const gchar *preset, gchar *module_name, int module_version);
+// remove a preset
+void dt_lib_presets_remove(const gchar *preset, gchar *module_name, int module_version);
+// update a preset
+void dt_lib_presets_update(const gchar *preset, gchar *module_name, int module_version, const gchar *newname,
+                           const gchar *desc, const void *params, const int32_t params_size);
+
 
 /*
  * Proxy functions
